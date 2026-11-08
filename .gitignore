@@ -1,0 +1,17 @@
+.DS_Store
+extension-key.pem
+.manifest-key.txt
+.extension-id.txt
+mac/.build/
+mac/.swiftpm/
+mac/dist/
+node_modules/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.smoke/
+dist/
+docs/store-assets/raw/
+RESUME.md
+S-*.jsonl
+S-*.md

@@ -1,0 +1,90 @@
+{
+ "values": [
+  {
+   "in": "hello world",
+   "out": "hello world"
+  },
+  {
+   "in": "my token is eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+   "out": "my token is [redacted:jwt]"
+  },
+  {
+   "in": "key sk-proj-abcdefghijklmnopqrstuv end",
+   "out": "key [redacted:token] end"
+  },
+  {
+   "in": "card 4111 1111 1111 1111 exp",
+   "out": "card [redacted:card] exp"
+  },
+  {
+   "in": "Order #20261107 shipped",
+   "out": "Order #20261107 shipped"
+  },
+  {
+   "in": "phone 4155550123 ok",
+   "out": "phone 4155550123 ok"
+  },
+  {
+   "in": "SSN 123-45-6789",
+   "out": "SSN [redacted:ssn]"
+  },
+  {
+   "in": "Authorization: Bearer abcdefghijklmnop1234",
+   "out": "Authorization: Bearer [redacted:token]"
+  },
+  {
+   "in": "AKIAIOSFODNN7EXAMPLE",
+   "out": "[redacted:token]"
+  },
+  {
+   "in": "secret a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0 here",
+   "out": "secret [redacted:secret] here"
+  },
+  {
+   "in": "The quick brown fox jumps over the lazy dog",
+   "out": "The quick brown fox jumps over the lazy dog"
+  },
+  {
+   "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ ],
+ "urls": [
+  {
+   "in": "https://example.com/path?q=shoes&token=abc123",
+   "out": "https://example.com/path?q=shoes&token=[redacted]"
+  },
+  {
+   "in": "https://user:pw@example.com/a",
+   "out": "https://[redacted]@example.com/a"
+  },
+  {
+   "in": "https://app.example.com/cb#access_token=xyz&expires_in=3600",
+   "out": "https://app.example.com/cb#access_token=[redacted]&expires_in=3600"
+  },
+  {
+   "in": "https://example.com/#/settings/profile",
+   "out": "https://example.com/#/settings/profile"
+  },
+  {
+   "in": "https://example.com/login?code=4/0AbCd&state=xyz&next=/home",
+   "out": "https://example.com/login?code=[redacted]&state=[redacted]&next=/home"
+  },
+  {
+   "in": "https://example.com/s?q=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+   "out": "https://example.com/s?q=[redacted]"
+  },
+  {
+   "in": "https://example.com/s?author=bob&page=2",
+   "out": "https://example.com/s?author=bob&page=2"
+  },
+  {
+   "in": "chrome://extensions",
+   "out": "chrome://extensions"
+  },
+  {
+   "in": "http://localhost:4399/cms/record/2?sessionid=XYZ",
+   "out": "http://localhost:4399/cms/record/2?sessionid=[redacted]"
+  }
+ ]
+}

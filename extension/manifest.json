@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Agent Ledger",
+  "version": "0.1.0",
+  "description": "Keeps a local, independently observed record of what AI agents do in Chrome.",
+  "homepage_url": "https://github.com/toddsherman/agent-ledger",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuOS/Wr51dJZQlYEGz+dZEIfKhCJRI8YQ+wY23F6epRX3xE2DtMhSGMQHGa2tZETChtTizCuNxzjAUpOmva7fhJKiTEfsHmwLfpFQEUDCr1cSPJH4KuDWQTDPnw6bW1B6D9z6J5P5UM92mF20We+M91NtKFgkBnu70PvdcLGg82ZhQdUeHHxEftQ038AXa6YrRdCSiXm6BMbRUu5q+lDVTIxENAnO2v7EK6U6vdVHRlXLC2TBwlg8Q85g0D1jLRIc1OblcoRj7ib6P/AeuWoGeNF5t+kyLGR/UH21ii4O7JND6kepLYH9H+1kAJo1RAH/qTjLjFs5TiQsZfkTIg4DYwIDAQAB",
+  "minimum_chrome_version": "120",
+  "background": {
+    "service_worker": "background/main.js"
+  },
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "webNavigation",
+    "debugger",
+    "downloads",
+    "management",
+    "nativeMessaging",
+    "storage",
+    "alarms",
+    "webRequest",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "lib/redact.js",
+        "lib/describe-element.js",
+        "content/capture.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "action": {
+    "default_title": "Agent Ledger",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
