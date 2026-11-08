@@ -270,6 +270,52 @@ final class CodexClaimTests: XCTestCase {
         XCTAssertEqual(commands.first?["type"]?.stringValue, "arm")
     }
 
+    private func codexCall(_ cat: String, t: Double, id: String, code: String) -> LedgerEvent {
+        LedgerEvent(src: "hook.codex", t: t, kind: cat == "tool.pre" ? EventKind.attemptedOp : EventKind.runtimeReport, cat: cat,
+                    p: ["agent": "codex", "session": "cx", "tool": "mcp__cua_repl__js", "toolUseId": .string(id), "browser": true,
+                        "input": ["code": .string(code)]])
+    }
+
+    func testCodexTabIdInCodeBindsTabAsRuntimeReported() throws {
+        let store = try LedgerStore(url: tempDir().appendingPathComponent("y.sqlite"))
+        let c = Correlator(store: store)
+        c.sendCommand = { _, _ in }
+        let t0 = 60_000_000.0
+        c.ingest([LedgerEvent(src: "ext.sw", t: t0 - 60_000, kind: EventKind.context, cat: "tab.snapshot", tab: 1511630265,
+                              url: "http://localhost:4399/cms/login", p: ["title": "Sign in"])])
+        // An ID that is not one of this browser's tabs is ignored.
+        c.ingest([codexCall("tool.pre", t: t0, id: "c1",
+                            code: "var tab = await cua.getTab(\"1511630265\", {browser:\"3\"}); await cua.getTab(\"999999\");")])
+        let s = try XCTUnwrap(store.sessions().first)
+        let bound = try store.sessionTabs(session: s.id)
+        XCTAssertEqual(bound.map { $0.tab }, [1511630265])
+        XCTAssertTrue(bound.first?.evidence?.contains("runtime-reported") ?? false)
+        XCTAssertEqual(Correlator.codexTabIds(in: "cua.getTab({ id: '42017' })"), [42017])
+        XCTAssertEqual(Correlator.codexTabIds(in: "cua.getTab({ url: \"http://x.test:4399/a\" })"), [])
+    }
+
+    func testCodexCallWithoutPostEndsWhenTheNextCallStarts() throws {
+        let store = try LedgerStore(url: tempDir().appendingPathComponent("z.sqlite"))
+        let c = Correlator(store: store)
+        c.sendCommand = { _, _ in }
+        let t0 = 70_000_000.0
+        c.ingest([LedgerEvent(src: "ext.sw", t: t0 - 60_000, kind: EventKind.context, cat: "tab.snapshot", tab: 7777,
+                              url: "http://localhost:4399/cms", p: ["title": "Records"])])
+        c.ingest([codexCall("tool.pre", t: t0, id: "c1", code: "await cua.getTab(\"7777\");")])   // never posts
+        c.ingest([codexCall("tool.pre", t: t0 + 4000, id: "c2", code: "await cua.listTabs();")])
+        c.ingest([codexCall("tool.post", t: t0 + 4100, id: "c2", code: "await cua.listTabs();")])
+        // A click 6 s after the last call ended is outside every call window: it must not be
+        // explained as happening during a Codex call.
+        c.ingest([LedgerEvent(src: "ext.content", t: t0 + 10_100, kind: EventKind.observedEffect, cat: "ui.click", tab: 7777, frame: 0,
+                              url: "http://localhost:4399/cms", p: ["focus": false, "trusted": true, "target": ["role": "link", "name": "Holiday hours"]])],
+                 receivedAt: t0 + 10_200)
+        c.tick(now: t0 + 20_000)
+        let s = try XCTUnwrap(store.sessions().first)
+        let click = try XCTUnwrap(store.events(forSession: s.id).first { $0.event.cat == "ui.click" })
+        let a = try XCTUnwrap(store.latestAttributions(session: s.id)[click.id])
+        XCTAssertFalse(a.reasons.contains { $0.contains("Codex reported a browser call") }, "\(a.reasons)")
+    }
+
     func testCodexSessionEndHookIsNotAsync() throws {
         let url = tempDir().appendingPathComponent("hooks.json")
         try HookInstaller.install(agent: .codex, hookBinary: "/b/ledger-hook", url: url)

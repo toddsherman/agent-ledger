@@ -29,9 +29,29 @@ There is one row per tested combination. "Detected via" says which evidence star
 - **SessionEnd:** Codex runs SessionEnd synchronously even when marked async, and shows an error line for it. The installer no longer marks Codex's SessionEnd/Interrupt hooks async. Re-trusting those two entries in Codex is needed after a reinstall.
 - **What was recorded:** the Summary field before → after, the submit with all 5 fields, `POST /cms/api/record/2 → 200`, and the "Saved" toast. All were Likely Codex, and the server's log matched.
 
+## Automated end-to-end run (2026-11-07 evening)
+
+Claude drove Codex through the ChatGPT app with computer use and drove Claude in Chrome directly. `node scripts/e2e/check.mjs --since <ms> --expect <agent>` compared each run with the testbed's server log (`/__log`).
+
+| Test | Result |
+| --- | --- |
+| Codex takes over an open tab on the sign-in page, signs in, edits record 3 | ✅ All effects **Likely Codex**; the password was not captured. Revealed the missing-change bugs below |
+| Codex opens a new tab and only reads it | ✅ Session recorded and the tab bound through Codex's tab group; no change events. The read itself shows only in Codex's tool reports |
+| Codex edits record 2 and triggers a validation error while Claude edits record 1 in another tab | ✅ Record 1 **Identified Claude Code**, record 2 **Likely Codex**; the 422 and "Not saved: Title is required" were recorded |
+| App restarted, then Codex immediately takes over a tab by URL | ✅ Tab bound on Codex's first call (after the snapshot-on-connect fix) |
+| Script-set fields after the capture fix (Claude `form_input`, Codex `fill`/`selectOption`) | ✅ Correct before → after for every field; script-set values are flagged `noChangeEvent` |
+| Installed extension copy out of date at app launch | ✅ The app restored it and the extension reloaded itself once |
+
+**Observations**
+- **Codex hooks cover only some Codex actions.** Codex reports its `mcp__cua_repl__js` calls. Its typing and clicks (including Save) go through another input path that fires no hook, and these events are trusted input (`isTrusted=true`). The recorder still labels them **Likely Codex**, because the tab's debugger stays attached and the tab is bound to the session.
+- **Codex names tab IDs in its code** (`cua.getTab("1511630265")`). The recorder now binds those tabs as runtime-reported.
+- **Codex calls that fail may never post.** A new call from the same Codex session now ends any earlier open call.
+- **Script-set values fire no `change` event.** Codex's Playwright `fill` and Claude's `form_input` both set values from script. Neither fires a native `change`. Before the fix, the ledger missed the change or recorded the old value wrong.
+- **Restarting the app lost the open-tab state,** which lives only in memory. The app now asks the extension for a snapshot whenever the extension connects.
+
 ## Known limits
 
-- **Codex attribution:** Codex's hook inputs carry no tab IDs, so its effects are "Likely Codex" (session-level), not "Identified". Without hooks it falls back to passive signals (helper connected, debugger attached, tab group named with an emoji).
+- **Codex attribution:** Codex's hook payloads have no tab ID field. The code sometimes names one, and the recorder uses it to bind the tab. Most Codex effects come through its unhooked input path, so they stay "Likely Codex" (session-level), not "Identified". Without hooks, the recorder falls back to passive signals: helper connected, debugger attached, tab group named with an emoji.
 - **Passive detection with two helpers connected:** both helpers stay connected, so a debugger attachment that Claude's hooks didn't report is attributed to the other agent only when Claude hooks are known to be active. Otherwise it is "Unknown agent".
 - **DevTools false start:** checked live. DevTools attached a debugger while both helpers were connected, and the detector recorded "not started" after 60 s without corroboration. Gap notices from such tentative sessions now stay in memory.
 - **Task labels:** labels come from `UserPromptSubmit`, which also fires for messages sent mid-turn, so a session that starts mid-conversation can be labeled with a short reply. Labels can be edited in the Ledger window.

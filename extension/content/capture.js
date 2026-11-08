@@ -22,9 +22,15 @@
   const ring = [];
   const queue = [];
   let flushTimer = null;
-  const focusValues = new WeakMap(); // field -> value when it gained focus
+  // field -> the last value the ledger knows: noted when recording starts (or the field appears),
+  // on first focus, and after each reported change. It is the "before" of the next change.
+  const focusValues = new WeakMap();
   const formBaselines = new WeakMap(); // form -> {selector: value}
   const inputTimers = new WeakMap();
+  const inputTrust = new WeakMap(); // field -> whether its last input event was trusted
+  const FIELD_SELECTOR = 'input, textarea, select, [contenteditable]';
+  // Live regions that password managers and similar extensions inject into pages.
+  const FOREIGN_REGION = /^(1p-|com-1password|onepassword|lastpass|__lp|bitwarden|bw-|dashlane|grammarly)/i;
   let mutationObserver = null;
   let domCounts = { added: 0, removed: 0, attributes: 0, text: 0 };
   let domTimer = null;
@@ -107,9 +113,37 @@
       if (!L.isField(f)) continue;
       const t = (f.type || '').toLowerCase();
       if (['submit', 'button', 'reset', 'image', 'file'].includes(t)) continue;
-      fields[L.selectorPath(f)] = readValue(f);
+      fields[L.selectorPath(f)] = focusValues.get(f) || readValue(f);
     }
     formBaselines.set(form, fields);
+  }
+
+  /** Notes the current value of every field under `root` the ledger hasn't seen yet. */
+  function noteFields(root) {
+    if (!armed || !root || typeof root.querySelectorAll !== 'function') return;
+    const els = root.nodeType === 1 && root.matches(FIELD_SELECTOR) ? [root] : [];
+    for (const el of root.querySelectorAll(FIELD_SELECTOR)) { if (els.length >= 400) break; els.push(el); }
+    for (const el of els) {
+      if (L.isField(el) && !focusValues.has(el)) focusValues.set(el, readValue(el));
+    }
+    const forms = root.nodeType === 1 && root.tagName === 'FORM' ? [root] : Array.from(root.querySelectorAll('form')).slice(0, 50);
+    forms.forEach(snapshotForm);
+  }
+
+  /**
+   * Reports a field whose value changed without a `change` event: values set by script
+   * (Playwright-style fill, frameworks) and contenteditable edits. Called on blur and submit.
+   */
+  function reportSilentChange(el) {
+    const before = focusValues.get(el);
+    if (!before) return;
+    const after = readValue(el);
+    if (JSON.stringify(before) === JSON.stringify(after)) return;
+    focusValues.set(el, after);
+    const editable = !!el.isContentEditable;
+    const payload = { trusted: inputTrust.has(el) ? inputTrust.get(el) : false, target: L.describe(el), before, after };
+    if (!editable) payload.noChangeEvent = true;
+    emit('observed_effect', editable ? 'edit.change' : 'field.change', payload);
   }
 
   function eventTarget(e) {
@@ -139,7 +173,7 @@
     const el = eventTarget(e);
     if (!el || !L.isField(el)) return;
     if (armed) {
-      focusValues.set(el, readValue(el));
+      if (!focusValues.has(el)) focusValues.set(el, readValue(el));
       snapshotForm(el.form || (el.closest && el.closest('form')));
     }
     emit('observed_effect', 'ui.focus', Object.assign(inputMeta(e), { target: L.describe(el) }));
@@ -151,6 +185,7 @@
     const prev = inputTimers.get(el);
     if (prev) clearTimeout(prev.timer);
     const state = prev || { count: 0, trusted: e.isTrusted, inputType: e.inputType };
+    inputTrust.set(el, e.isTrusted);
     state.count += 1;
     state.trusted = state.trusted && e.isTrusted;
     state.timer = setTimeout(() => {
@@ -178,12 +213,10 @@
 
   function onFocusOut(e) {
     const el = eventTarget(e);
-    if (!el || !el.isContentEditable || !armed) return;
-    const before = focusValues.get(el);
-    const after = readValue(el);
-    if (!before || before.value === after.value) return;
-    emit('observed_effect', 'edit.change', Object.assign(inputMeta(e), { target: L.describe(el), before, after }));
-    focusValues.delete(el);
+    if (!el || !armed || !L.isField(el)) return;
+    // A native `change` (fired before blur) has already moved the baseline, so this only
+    // reports values that changed without one.
+    reportSilentChange(el);
   }
 
   function onSubmit(e) {
@@ -204,6 +237,8 @@
       const baseline = formBaselines.get(form) || {};
       const fields = [];
       const els = form.elements ? Array.from(form.elements).slice(0, 150) : [];
+      // Submitting with Enter, or by script, may never blur the edited field.
+      for (const f of els) { if (L.isField(f)) reportSilentChange(f); }
       for (const f of els) {
         if (!L.isField(f)) continue;
         const t = (f.type || '').toLowerCase();
@@ -284,6 +319,7 @@
   }
 
   function reportAlert(region) {
+    if (FOREIGN_REGION.test(region.id || '') || FOREIGN_REGION.test(typeof region.className === 'string' ? region.className : '')) return;
     const text = L.clean(region.innerText || region.textContent, 300);
     if (!text) return;
     const key = text;
@@ -306,6 +342,7 @@
         domCounts.added += r.addedNodes.length;
         domCounts.removed += r.removedNodes.length;
         for (const n of r.addedNodes) {
+          if (n.nodeType === 1) noteFields(n);
           const region = liveRegionFor(n);
           if (region) regions.add(region);
           else if (n.nodeType === 1 && typeof n.querySelectorAll === 'function') {
@@ -355,8 +392,9 @@
       const pre = ring.splice(0, ring.length).filter((e) => e.t >= cutoff);
       for (const e of pre) { e.pre = true; e.rec = true; queue.push(e); }
       emit('context', 'capture.content_armed', { session: session || null, prebuffered: pre.length, title: L.clean(document.title, 200) });
-      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });
-      else startObserver();
+      const start = () => { noteFields(document); startObserver(); };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+      else start();
     }
     schedule();
   }

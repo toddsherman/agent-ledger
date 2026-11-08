@@ -99,7 +99,18 @@ final class AppModel: ObservableObject {
         switch msg.type {
         case "hello":
             if msg.role == "host" {
-                // A (re)connected extension: re-send arm commands for live sessions.
+                if extensionFilesChanged {
+                    extensionFilesChanged = false
+                    var line = (["type": "reload", "force": true] as JSONValue).canonicalData()
+                    line.append(0x0A)
+                    server.send(to: peer.id, line)
+                    return
+                }
+                // A (re)connected extension (or a restarted app): ask for the open tabs, groups and
+                // debugger state, which live only in memory, then re-send arm commands.
+                var snapshot = (["type": "snapshot"] as JSONValue).canonicalData()
+                snapshot.append(0x0A)
+                server.send(to: peer.id, snapshot)
                 queue.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.correlator.rearmAll() }
             }
         case "events":
@@ -342,8 +353,13 @@ final class AppModel: ObservableObject {
             try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? fm.removeItem(at: target)
             try? fm.copyItem(at: file, to: target)
+            extensionFilesChanged = true
         }
     }
+
+    /// Set when launch copied new extension files; the next connecting extension is asked to
+    /// reload so Chrome picks them up without a trip to chrome://extensions.
+    private var extensionFilesChanged = false
 
     func refreshIntegrations() {
         hooksInstalled = [.claude: HookInstaller.isInstalled(agent: .claude), .codex: HookInstaller.isInstalled(agent: .codex)]

@@ -124,6 +124,8 @@ async function onHostMessage(msg) {
     case 'disarm': await disarmTab(msg.tab, msg.session); break;
     case 'snapshot': await sendSnapshot(); break;
     case 'ping': port && port.postMessage({ type: 'pong' }); break;
+    // The app installed a newer copy of this (unpacked) extension: pick it up.
+    case 'reload': if (msg.version !== chrome.runtime.getManifest().version || msg.force) chrome.runtime.reload(); break;
     default: break;
   }
 }

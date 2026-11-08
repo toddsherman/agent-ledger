@@ -410,7 +410,12 @@ public final class Correlator {
         var rt = runtimes[key] ?? Runtime(agent: agent, session: session, lastActivityAt: e.t)
         rt.lastActivityAt = max(rt.lastActivityAt, e.t)
         let browser = e.p?["browser"]?.boolValue ?? false
-        let tabIds = e.p?["tabIds"]?.arrayValue?.compactMap { $0.intValue } ?? []
+        var tabIds = e.p?["tabIds"]?.arrayValue?.compactMap { $0.intValue } ?? []
+        if agent == .codex, browser, let code = e.p?["input"]?["code"]?.stringValue {
+            // Codex names Chrome tab IDs in its code (cua.getTab("1511630265")); trust only IDs
+            // of tabs this browser actually has.
+            for id in Self.codexTabIds(in: code) where tabs[id] != nil && !tabIds.contains(id) { tabIds.append(id) }
+        }
 
         switch e.cat {
         case "turn.prompt":
@@ -434,6 +439,13 @@ public final class Correlator {
             let callId = e.p?["toolUseId"]?.stringValue ?? "\(key)-\(e.t)"
             let tool = e.p?["tool"]?.stringValue ?? "?"
             if e.cat == "tool.pre" {
+                if agent == .codex {
+                    // Codex runs its browser calls one at a time, so a new call ends any earlier one
+                    // whose PostToolUse never arrived (failed calls may not report one).
+                    for (id, c) in toolCalls where c.runtimeKey == key && c.endedAt == nil && id != callId {
+                        toolCalls[id]?.endedAt = e.t
+                    }
+                }
                 toolCalls[callId] = ToolCall(agent: agent, runtimeKey: key, toolUseId: callId, tool: tool, tabs: tabIds,
                                              startedAt: e.t)
                 if tool.hasSuffix("tabs_create_mcp") || tool.contains("new_tab") { rt.pendingTabCreateAt = e.t }
@@ -455,7 +467,7 @@ public final class Correlator {
             }
             if agent == .codex && tabIds.isEmpty {
                 // Codex hooks may not name tabs: bind tabs whose debugger attached around this call.
-                for (tab, s) in tabs where s.debuggerAttached && abs(s.debuggerChangedAt - e.t) < 5000 && s.session == nil {
+                for (tab, s) in tabs where s.debuggerAttached && abs(s.debuggerChangedAt - e.t) < 5000 && claimable(s, by: l) {
                     bind(l, tab: tab, at: e.t, evidence: "debugger attached within 5 s of a Codex browser call")
                 }
                 // Codex claims existing tabs by URL (cua.getTab({url}), claimTab): bind open tabs
@@ -492,11 +504,27 @@ public final class Correlator {
         }
     }
 
+    /// A tab a new agent call may take over: unbound, or bound to another session that is no
+    /// longer actively recording (an earlier conversation that went idle on the same tab).
+    private func claimable(_ s: TabState, by l: Live) -> Bool {
+        guard let sid = s.session else { return true }
+        return sid != l.record.id && live[sid]?.record.state != "recording"
+    }
+
     private func touchRuntimeSession(_ rt: Runtime, at t: Double) {
         if let sid = rt.ledgerSession, let l = live[sid], l.record.state != "possible" { touch(l, at: t) }
     }
 
     static let urlPattern = try! NSRegularExpression(pattern: "https?://[^\\s\"'`)<>]+")
+    static let codexTabPattern = try! NSRegularExpression(
+        pattern: "(?:getTab|claimTab)\\(\\s*(?:\\{\\s*(?:id|tabId)\\s*:\\s*)?[\"'`]?(\\d{3,12})\\b")
+
+    /// Chrome tab IDs that Codex's browser code names explicitly.
+    static func codexTabIds(in code: String) -> [Int] {
+        let ns = code as NSString
+        return codexTabPattern.matches(in: code, range: NSRange(location: 0, length: ns.length))
+            .compactMap { Int(ns.substring(with: $0.range(at: 1))) }
+    }
 
     static func urls(in text: String) -> [String] {
         let ns = text as NSString
@@ -770,7 +798,9 @@ public final class Correlator {
                cause.actor != "unknown" {
                 actor = cause.actor; label = cause.actor == "mixed" ? "mixed" : "likely"
                 reasons.append("follows \(cause.what) \(Int(max(0, e.t - cause.t))) ms earlier, attributed to \(cause.display); likely its result")
-            } else if e.p?["trusted"]?.boolValue == false {
+            } else if e.p?["trusted"]?.boolValue == false || e.cat == "dom.summary" {
+                // Script-synthesized events, and DOM churn no action explains (a toast timing
+                // out), come from the page itself.
                 actor = "page"; label = "likely"
             } else {
                 actor = "unknown"; label = "unknown"

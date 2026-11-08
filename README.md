@@ -117,5 +117,8 @@ node testbed/server.mjs
 - `swift test` runs the Swift unit tests.
 - `node --test extension/test` runs the extension tests, including the shared redaction fixtures.
 - `node testbed/server.mjs` starts the diagnostic page and mock CMS at http://localhost:4399. On that origin only, the content script writes the recorder's status to `document.documentElement.dataset.agentLedger`.
+- `node scripts/e2e/check.mjs --since -10m --expect codex` checks every save the testbed received in that window against the ledger: the request, the submitted values, the field changes and the toast. With `--expect`, it also checks that each one is attributed to the expected agent. Use `--expect 1:claude-code,2:codex` to give an agent per record. It also lists sessions, failed requests, gaps and detector decisions, and runs the hash-chain check.
+
+When the app launches with updated extension files, it copies them to `~/Library/Application Support/AgentLedger/extension` and asks the connected extension to reload. You don't need to click Reload in `chrome://extensions`.
 
 For throwaway data, set `AGENT_LEDGER_HOME` to a **short** path (Unix socket paths are limited to 104 bytes), for example `<repo>/.smoke`.
