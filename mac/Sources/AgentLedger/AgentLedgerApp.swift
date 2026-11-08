@@ -22,6 +22,7 @@ struct AgentLedgerApp: App {
                 .frame(minWidth: 960, minHeight: 600)
         }
         .defaultSize(width: 1180, height: 760)
+        .handlesExternalEvents(matching: ["ledger"])
 
         Settings {
             SettingsView()

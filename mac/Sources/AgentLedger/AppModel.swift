@@ -11,6 +11,21 @@ final class AppModel: ObservableObject {
     @Published var hooksInstalled: [HookAgent: Bool] = [:]
     @Published var hostRegisteredPath: String?
     @Published var dataVersion = 0
+    /// Set by agentledger://ledger?session=<id>&tab=changes|timeline|evidence links.
+    @Published var deepLink: DeepLink?
+
+    struct DeepLink: Equatable {
+        var session: String?
+        var tab: String?
+        var nonce = UUID()
+    }
+
+    func handle(url: URL) {
+        guard url.scheme == "agentledger" else { return }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        deepLink = DeepLink(session: items.first { $0.name == "session" }?.value,
+                            tab: items.first { $0.name == "tab" }?.value)
+    }
 
     let store: LedgerStore
     let correlator: Correlator
@@ -89,6 +104,18 @@ final class AppModel: ObservableObject {
             }
         case "events":
             correlator.ingest(msg.events ?? [], peer: peer.id, receivedAt: nowMs())
+        case "snapshot":
+            // From ledgerctl (same user only): draw the Ledger window into a PNG.
+            if let path = JSONValue.parse(line)?["path"]?.stringValue {
+                let server = self.server
+                DispatchQueue.main.async {
+                    let result = Self.snapshotLedgerWindow(to: URL(fileURLWithPath: path))
+                    var reply = (["type": "snapshot.result", "ok": .bool(result == nil),
+                                  "error": result.map { .string($0) } ?? .null] as JSONValue).canonicalData()
+                    reply.append(0x0A)
+                    server.send(to: peer.id, reply)
+                }
+            }
         default:
             break
         }
@@ -147,6 +174,23 @@ final class AppModel: ObservableObject {
                 self.dataVersion += 1
             }
         }
+    }
+
+    /// Renders the visible Ledger window (an app may always draw its own windows; no Screen
+    /// Recording permission involved). Used for store screenshots.
+    /// Returns nil on success, otherwise the reason it failed.
+    static func snapshotLedgerWindow(to url: URL) -> String? {
+        let candidates = NSApp.windows.filter { $0.isVisible && $0.frame.width >= 600 && !($0 is NSPanel) }
+        guard let window = candidates.first(where: { $0.title == "Agent Ledger" }) ?? candidates.max(by: { $0.frame.width < $1.frame.width }) else {
+            return "no visible Ledger window (windows: \(NSApp.windows.map { "\($0.title)|\(Int($0.frame.width))|\($0.isVisible)" }))"
+        }
+        guard let content = window.contentView else { return "window has no content view" }
+        let view = content.superview ?? content
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return "could not allocate bitmap" }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return "PNG encoding failed" }
+        do { try png.write(to: url, options: .atomic) } catch { return "write failed: \(error.localizedDescription)" }
+        return nil
     }
 
     // MARK: Actions (main thread)
@@ -326,6 +370,8 @@ final class AppModel: ObservableObject {
     /// Keeps Chrome's native host registration pointing at this install, with every known
     /// extension ID. Agent hooks are never installed without the user asking.
     private func registerHostIfNeeded() {
+        // AGENT_LEDGER_NO_REGISTER=1 (demo/test instances) leaves Chrome's registration alone.
+        if ProcessInfo.processInfo.environment["AGENT_LEDGER_NO_REGISTER"] == "1" { return }
         DispatchQueue.global().async {
             guard NativeHostInstaller.chromeInstalled,
                   FileManager.default.fileExists(atPath: Self.hostBinary),

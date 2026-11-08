@@ -35,7 +35,12 @@ struct LedgerWindow: View {
                 ContentUnavailableView("Select a session", systemImage: "sidebar.left")
             }
         }
-        .onAppear { if selection == nil { selection = model.summaries.first?.id } }
+        .onAppear {
+            if let s = model.deepLink?.session { selection = s }
+            if selection == nil { selection = model.summaries.first?.id }
+        }
+        .onOpenURL { model.handle(url: $0) }
+        .onChange(of: model.deepLink) { _, link in if let s = link?.session { selection = s } }
     }
 }
 
@@ -116,8 +121,17 @@ struct SessionDetailView: View {
                 ProgressView()
             }
         }
-        .onAppear(perform: reload)
+        .onAppear {
+            reload()
+            applyTab(model.deepLink)
+        }
+        .onChange(of: model.deepLink) { _, link in applyTab(link) }
         .onChange(of: model.dataVersion) { _, _ in reload() }
+    }
+
+    private func applyTab(_ link: AppModel.DeepLink?) {
+        guard let raw = link?.tab?.lowercased(), link?.session == nil || link?.session == sessionId else { return }
+        if let t = DetailTab.allCases.first(where: { $0.rawValue.lowercased() == raw }) { tab = t }
     }
 
     private func reload() {

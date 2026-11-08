@@ -51,11 +51,17 @@ It writes `dist/agent-ledger-chrome-<version>.zip` and removes the development `
 
 - **Store icon:** `extension/icons/icon128.png`
 - **Small promo tile** (440×280): `docs/store-assets/promo-tile-440x280.png`
-- **Screenshots** (1280×800, at least one): capture windows into `docs/store-assets/raw/` and resize them to 1280×800 (for example with `sips`). Suggested:
-  1. The Ledger window, Changes view, for a Claude Code session.
-  2. A Chrome tab with the REC badge while an agent edits a page.
-  3. The Ledger window for a Codex session.
-  4. The menu bar panel with an active session.
+- **Screenshots:** upload these four 1280×800 files, in order:
+  1. `docs/store-assets/screenshot-1-1280x800.png`: "See exactly what an agent changed" (Claude Code session, Changes view).
+  2. `docs/store-assets/screenshot-2-1280x800.png`: "Your own edits are labeled as yours".
+  3. `docs/store-assets/screenshot-3-1280x800.png`: "Works with Codex too".
+  4. `docs/store-assets/screenshot-4-1280x800.png`: "Agent reports and browser observations, side by side" (Timeline view).
+
+  **How they're made:** they're real captures of the Ledger window, taken from a demo copy of the ledger that holds only the mock-CMS test sessions, with neutral task labels and no personal text. To regenerate them:
+  1. Run the app with `AGENT_LEDGER_HOME=<demo dir> AGENT_LEDGER_NO_REGISTER=1`. The flag stops a demo instance from changing Chrome's native host registration.
+  2. Open a view with a link, e.g. `open "agentledger://ledger?session=<id>&tab=changes"`.
+  3. Capture it with `ledgerctl snapshot <file>.png`, run with the same `AGENT_LEDGER_HOME`.
+  4. Run `swift mac/scripts/frame-screenshots.swift <captures dir>`.
 
 ## Privacy practices tab
 

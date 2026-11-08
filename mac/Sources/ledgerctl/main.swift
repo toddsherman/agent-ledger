@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import LedgerCore
 
 // Command-line companion for Agent Ledger.
@@ -69,6 +70,21 @@ case "sessions":
 case "export":
     guard args.count > 1 else { fail("usage: ledgerctl export <session-id>") }
     for u in try Exporter.export(store: openStore(), session: args[1]) { print(u.path) }
+case "snapshot":
+    guard args.count > 1 else { fail("usage: ledgerctl snapshot <out.png>  (the Ledger window must be open)") }
+    let out = URL(fileURLWithPath: args[1]).standardizedFileURL
+    try? FileManager.default.removeItem(at: out)
+    let client = SocketClient()
+    guard client.connect() else { fail("Agent Ledger isn't running") }
+    let req: JSONValue = ["type": "snapshot", "path": .string(out.path)]
+    var line = WireMessage(type: "hello", role: "ctl", pid: Int(getpid())).line()
+    line.append(req.canonicalData()); line.append(0x0A)
+    _ = client.send(line)
+    guard let replies = client.readLines(), let reply = replies.compactMap({ JSONValue.parse($0) }).first(where: { $0["type"]?.stringValue == "snapshot.result" }) else {
+        fail("no reply from Agent Ledger")
+    }
+    if reply["ok"]?.boolValue != true { fail("snapshot failed: \(reply["error"]?.stringValue ?? "unknown")") }
+    print(out.path)
 case "verify":
     let v = try openStore().verifyChain()
     print(v.ok ? "hash chain intact over \(v.checked) events" : "hash chain broken at event \(v.firstBadEventId ?? -1)")
