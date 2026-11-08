@@ -92,11 +92,36 @@ function connect() {
     emit('gap', 'gap.host_disconnected', { p: { reason } });
     scheduleReconnect();
   });
-  port.postMessage({
-    type: 'hello', ext: chrome.runtime.id, ver: VERSION, inst: INST, browser: navigator.userAgent,
-  });
+  sendHello();
   sendSnapshot();
   flush();
+}
+
+// One ID per install, which means one per Chrome profile: the app tells profiles apart by it.
+async function installId() {
+  try {
+    const got = await chrome.storage.local.get('installId');
+    if (got.installId) return got.installId;
+    const id = 'inst-' + crypto.randomUUID();
+    await chrome.storage.local.set({ installId: id });
+    return id;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function sendHello() {
+  const [id, incognitoAllowed] = await Promise.all([
+    installId(),
+    chrome.extension.isAllowedIncognitoAccess().catch(() => null),
+  ]);
+  if (!port) return;
+  try {
+    port.postMessage({
+      type: 'hello', ext: chrome.runtime.id, ver: VERSION, inst: INST, browser: navigator.userAgent,
+      installId: id, incognitoAllowed,
+    });
+  } catch (err) { /* reconnect handles it */ }
 }
 
 function scheduleReconnect() {

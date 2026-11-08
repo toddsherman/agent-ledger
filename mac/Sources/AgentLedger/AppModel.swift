@@ -57,7 +57,7 @@ final class AppModel: ObservableObject {
         server.onLine = { [weak self] peer, line in self?.queue.async { self?.handle(peer: peer, line: line) } }
         server.onDisconnect = { [weak self] peer in
             guard peer.role == "host" else { return }
-            self?.queue.async { self?.publish() }
+            self?.queue.async { self?.correlator.peerDisconnected(peer.id); self?.publish() }
         }
         do { try server.start() } catch { message = "Could not open the ingest socket: \(error)" }
 
@@ -81,7 +81,23 @@ final class AppModel: ObservableObject {
         every(30.0) { [weak self] in self?.drainSpool() }
         every(6 * 3600) { [weak self] in self?.purgeIfNeeded() }
         registerHostIfNeeded()
+        upgradeHooksIfNeeded()
         refreshIntegrations()
+    }
+
+    /// Hooks installed by an older version get the current matchers (for example, coverage of
+    /// shell commands and automation tools that reach Chrome). Only agents whose hooks are
+    /// already installed are touched; Codex's plan rarely changes, since it asks you to
+    /// re-trust changed hooks.
+    private func upgradeHooksIfNeeded() {
+        for agent in [HookAgent.claude, .codex] where HookInstaller.isInstalled(agent: agent) &&
+            HookInstaller.needsUpgrade(agent: agent) {
+            do {
+                let r = try HookInstaller.install(agent: agent, hookBinary: Self.hookBinary)
+                message = "Updated the \(agent == .claude ? "Claude Code" : "Codex") hooks to cover more ways agents reach Chrome" +
+                    (r.backup.map { ". Backup: \(($0 as NSString).lastPathComponent)" } ?? "")
+            } catch { message = "Hook update failed: \(error.localizedDescription)" }
+        }
     }
 
     private func every(_ seconds: Double, _ body: @escaping () -> Void) {
@@ -158,6 +174,10 @@ final class AppModel: ObservableObject {
             "lastHookAt": st.lastHookAt,
             "paused": st.paused,
             "memoryEvents": st.memoryEvents,
+            "chromeInstalls": st.chromeInstalls,
+            "incognitoCovered": st.incognitoCovered ?? NSNull(),
+            "remoteDebugging": st.remoteDebugging ?? NSNull(),
+            "agentBrowsers": st.agentBrowsers,
             "sessions": st.sessions.map { ["id": $0.id, "agent": $0.agent, "state": $0.state, "tabs": $0.tabs, "attribution": $0.attribution] },
             "recentHooks": st.recentHooks.suffix(40).map { h -> [String: Any] in
                 ["t": h.t, "agent": h.agent, "cat": h.cat, "tool": h.tool ?? NSNull(), "browser": h.browser, "tabIds": h.tabIds, "inputKeys": h.inputKeys]

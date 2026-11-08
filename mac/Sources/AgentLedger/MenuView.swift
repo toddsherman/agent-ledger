@@ -105,7 +105,13 @@ struct MenuView: View {
     private var health: some View {
         VStack(alignment: .leading, spacing: 3) {
             healthRow("Chrome extension", ok: model.status.extensionConnected,
-                      detail: model.status.extensionConnected ? "connected" : "not heard from")
+                      detail: model.status.extensionConnected ? extensionDetail : "not heard from")
+            if let rd = model.status.remoteDebugging {
+                healthRow("Remote debugging is on in Chrome", ok: false, detail: rd)
+            }
+            ForEach(model.status.agentBrowsers, id: \.self) { b in
+                healthRow("Agent-started browser", ok: false, detail: b)
+            }
             healthRow("Claude Code hooks", ok: model.hooksInstalled[.claude] == true,
                       detail: model.hooksInstalled[.claude] == true ? lastHook("claude-code") : "not installed")
             healthRow("Codex hooks", ok: model.hooksInstalled[.codex] == true,
@@ -114,6 +120,13 @@ struct MenuView: View {
             Text("Agent browser helpers: Claude \(helpers["claude-code"] ?? 0), Codex \(helpers["codex"] ?? 0)")
                 .font(.caption2).foregroundStyle(.secondary)
         }
+    }
+
+    private var extensionDetail: String {
+        let n = model.status.chromeInstalls
+        var s = n > 1 ? "connected in \(n) profiles" : "connected"
+        if model.status.incognitoCovered == false { s += "; incognito not recorded" }
+        return s
     }
 
     private func lastHook(_ agent: String) -> String {

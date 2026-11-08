@@ -120,12 +120,39 @@ public enum HookTranslator {
         if cat.hasPrefix("tool.") {
             let toolName = o["tool_name"]?.stringValue ?? "?"
             let toolInput = o["tool_input"]
-            let browser = isBrowserTool(agent: agent, toolName: toolName, input: toolInput)
+            var route = BrowserRoute.byName(agent: agent, toolName: toolName)
+            var shell: (command: String, finding: ShellFinding)?
+            let shellCommand = route == nil ? BrowserRoute.shellCommand(toolName: toolName, input: toolInput) : nil
+            if let cmd = shellCommand {
+                let f = ShellAnalyzer.analyze(cmd)
+                if !f.isEmpty { route = BrowserRoute.shell; shell = (cmd, f) }
+            } else if route == nil, isBrowserTool(agent: agent, toolName: toolName, input: toolInput) {
+                route = BrowserRoute.extensionRoute
+            }
+            var chromeTarget: Bool?
+            if route == BrowserRoute.computerUse { chromeTarget = BrowserRoute.computerUseTargetsChrome(toolInput) }
+            // Computer use on the whole screen is decided later from the frontmost app.
+            let browser = route != nil && (route != BrowserRoute.computerUse || chromeTarget == true)
             p["tool"] = .string(toolName)
             p["browser"] = .bool(browser)
+            if let route, route != BrowserRoute.computerUse || chromeTarget != false { p["route"] = .string(route) }
             if let id = o["tool_use_id"]?.stringValue { p["toolUseId"] = .string(id) }
             if let keys = toolInput?.objectValue?.keys.sorted() { p["inputKeys"] = .array(keys.prefix(20).map { .string($0) }) }
-            if browser {
+            if let shell {
+                // Only commands that reach Chrome are kept, and never their output.
+                p["input"] = ["command": .string(Redactor.truncate(Redactor.scrub(shell.command), max: 2000))]
+                p["routeKinds"] = .array(shell.finding.kinds.map { .string($0) })
+                if !shell.finding.urls.isEmpty { p["urls"] = .array(shell.finding.urls.map { .string($0) }) }
+                if !shell.finding.flags.isEmpty { p["flags"] = .array(shell.finding.flags.map { .string($0) }) }
+                if cat != "tool.pre" {
+                    let r = summarizeResult(o["tool_response"] ?? o["error"])
+                    p["result"] = ["isError": r["isError"] ?? false, "textLength": r["textLength"] ?? 0]
+                }
+            } else if route == BrowserRoute.computerUse, chromeTarget != false {
+                p["input"] = BrowserRoute.computerUseSummary(toolInput)
+                p["chromeTarget"] = chromeTarget.map { .bool($0) } ?? .null
+                if cat != "tool.pre" { p["result"] = summarizeResult(o["tool_response"] ?? o["error"]) }
+            } else if browser {
                 if let toolInput { p["input"] = Redactor.sanitize(toolInput) }
                 let tabs = tabIds(in: toolInput)
                 if !tabs.isEmpty {

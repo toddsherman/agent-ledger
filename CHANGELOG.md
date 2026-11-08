@@ -11,6 +11,14 @@ Sparkle update notes.
 - More accurate reasons for Codex attributions: a Codex call that never reported finishing no longer counts as "in progress" for a minute.
 - The Chrome extension reloads itself when the app installs updated extension files.
 - Password managers' own announcements (such as 1Password's menu notice) are no longer recorded as page messages.
+- Records more of the ways agents reach Chrome:
+  - shell commands that open URLs in Chrome, send it AppleScript, start it, use its debugging port, or read its profile files (only those commands are kept, never their output)
+  - browser-automation tools such as Playwright and Chrome DevTools
+  - computer use aimed at Chrome
+  - separate Chrome processes that an agent starts, linked to that agent's session
+- Warns in the menu when remote debugging is on in your Chrome, when an agent-started browser is running, and when incognito windows aren't recorded.
+- Claude Code hooks installed by 0.1.0 are updated automatically to the new coverage. A backup of the settings file is kept.
+- Physical input now counts as yours only if Chrome was already in front when you pressed the key or clicked. Typing in another app just before an agent brings Chrome forward no longer makes the agent's action "Mixed".
 
 ## 0.1.0
 

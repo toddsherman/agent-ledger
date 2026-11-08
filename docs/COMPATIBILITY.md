@@ -7,6 +7,8 @@ There is one row per tested combination. "Detected via" says which evidence star
 | 2026-11-07 | Claude Code 2.1.316 (desktop app session) | Claude in Chrome extension 1.0.105, native host `claude --chrome-native-host` | 157.0.8103.39 | 0.1.0 | Hooks (`mcp__claude-in-chrome__*`, with `tabId` in the input) | ✅ Session started on the first browser tool call; the tab was bound by `tabId`. See the observations below |
 | 2026-11-07 | Codex in the ChatGPT app (26.1103.x, GPT-6 Astra) | ChatGPT extension 1.26.1102.11740, native host `ChatGPT for Chrome`, MCP tool `mcp__cua_repl__js` | 157.0.8103.39 | 0.1.0 | Hooks (`PreToolUse`/`PostToolUse` for `mcp__cua_repl__js`; `code` matched `cua.`), with the tab bound by its debugger attaching during the call | ✅ Existing-tab edit recorded; effects labeled **Likely Codex** (session-level; Codex inputs carry no tab ID) |
 | 2026-11-07 | Codex CLI 0.167.0 (`codex exec`) | Same plugin config | 157.0.8103.39 | 0.1.0 | Hooks | ⚠️ The CLI can't reach Chrome ("browser access host is unavailable"); only the app hosts the Chrome bridge. The session and browser calls were still recorded, with no tab |
+| 2026-11-08 | Claude Code 2.1.317 (desktop app session) | Shell: `open <url>` from the `Bash` tool | 157.0.8103.39 | 0.1.0+ (unreleased) | Hooks (`Bash` matcher, picked up by the already-running session) | ✅ The command, the tab it opened, and its navigation (**Likely Claude Code**) |
+| 2026-11-08 | Codex CLI 0.167.0 (`codex exec`, `danger-full-access`) | Shell: `open <url>`, then a headless Chrome with `--user-data-dir` and `--remote-debugging-port` | 157.0.8103.39 | 0.1.0+ (unreleased) | Hooks (`Bash` with `command`) plus the process scan | ✅ One session: the `open` command, the tab it opened (**Likely Codex**), and the separate Chrome (linked by process ancestry, with its port and profile folder) |
 
 ## Claude Code observations (2026-11-07, mock CMS)
 
@@ -48,6 +50,16 @@ Claude drove Codex through the ChatGPT app with computer use and drove Claude in
 - **Codex calls that fail may never post.** A new call from the same Codex session now ends any earlier open call.
 - **Script-set values fire no `change` event.** Codex's Playwright `fill` and Claude's `form_input` both set values from script. Neither fires a native `change`. Before the fix, the ledger missed the change or recorded the old value wrong.
 - **Restarting the app lost the open-tab state,** which lives only in memory. The app now asks the extension for a snapshot whenever the extension connects.
+
+## Routes beyond the agents' extensions (2026-11-08)
+
+- **Codex shell hooks:** Codex reports shell commands as tool `Bash` with input `{command}` (a string), so the same shell analysis covers Claude Code and Codex.
+- **Tab from `open <url>`:** Chrome created the tab about 200 ms after `PreToolUse`. It's bound by timing ("created right after Codex ran a shell command…"), and its navigation is Likely Codex.
+- **Shell globbing:** `open http://…?run=2` failed under zsh (`no matches found`) and opened nothing. The ledger correctly showed the attempt with no tab.
+- **Nested agents:** this Codex ran inside a Claude Code shell. The browser it started has both agents among its ancestors. Only the nearest agent is credited (a bug found and fixed in this run).
+- **Hook upgrade:** relaunching the app updated the 0.1.0 Claude Code hook matcher in `~/.claude/settings.json` and kept a backup. A Claude Code session that was already running picked up the new matcher without a restart.
+- **Heredocs:** a Python edit whose heredoc held docs about `--remote-debugging-port` was first recorded as reaching Chrome. Heredoc bodies are now treated as data (AppleScript fed through a heredoc still counts), and Chrome's flags count only on commands that start Chrome.
+- **Not yet run live:** AppleScript (it would trigger macOS's Automation prompt), computer use, Playwright or DevTools MCP, the Chrome remote-debugging switch, and Claude in Chrome's side panel. These are unit-tested only.
 
 ## Known limits
 

@@ -1,6 +1,6 @@
 # Agent Ledger privacy policy
 
-_Last updated: November 7, 2026_
+_Last updated: November 8, 2026_
 
 Agent Ledger is a Chrome extension and a companion Mac app. Together they keep a record, on your own Mac, of what AI agents such as Claude Code and Codex do in your browser.
 
@@ -24,6 +24,8 @@ When an AI agent is using a tab, that tab is recorded. The Mac app decides when 
 
 In every tab, the extension also watches tab, tab-group, window and navigation events, whether a debugger is attached to a tab, and which known AI agent extensions are installed. It uses these to detect when an agent starts working. Outside a recorded session this information stays in memory and expires.
 
+The extension stores one random ID in its own local storage so the app can tell your Chrome profiles apart, and it tells the app whether you allowed it in incognito windows.
+
 The extension never takes screenshots, and never reads cookies, saved passwords, browsing history or bookmarks.
 
 ## Where data is stored
@@ -34,7 +36,18 @@ Exports (JSONL and Markdown) are written only when you ask, to a folder on your 
 
 ## Agent hooks
 
-If you choose to install them, Agent Ledger adds logging-only hooks to Claude Code and Codex. They report each browser tool call, and the prompt that started the session (truncated to 500 characters), to the local app. They never block or change what the agent does, and they send nothing off your Mac.
+If you choose to install them, Agent Ledger adds logging-only hooks to Claude Code and Codex. They report to the local app:
+
+- each browser tool call (Claude in Chrome, Codex's Chrome extension, and browser-automation tools such as Playwright or Chrome DevTools)
+- shell commands that reach Chrome: opening a URL, AppleScript sent to Chrome, starting Chrome, using its debugging port, or reading its profile files. The hooks see every shell command the agent runs, but only these are kept, and never their output.
+- computer-use actions aimed at Chrome. Typed text is never kept, only its length.
+- the prompt that started the session, truncated to 500 characters
+
+They never block or change what the agent does, and they send nothing off your Mac.
+
+## What the Mac app observes
+
+To notice browsers that agents start themselves, the app reads the command lines of Chrome-family processes on your Mac and which process started them. It records only the ones started by an agent or opened for automation or remote debugging. It also checks whether remote debugging is turned on in your Chrome. It reads no browsing data from Chrome's files.
 
 ## Updates
 

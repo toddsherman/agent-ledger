@@ -60,7 +60,7 @@ must stay under 1 MB.
 Extension → host:
 
 ```json
-{"type":"hello","ext":"odfiimhaencobkjndlcohhcjbehmejmf","ver":"0.1.0","inst":"sw-…","browser":"Chrome/157…","profileHint":"…"}
+{"type":"hello","ext":"odfiimhaencobkjndlcohhcjbehmejmf","ver":"0.1.0","inst":"sw-…","browser":"Chrome/157…","installId":"inst-…","incognitoAllowed":false}
 {"type":"events","events":[ <envelope>, … ]}
 ```
 
@@ -107,5 +107,32 @@ writes nothing to stdout.
 
 Payload `p`: `agent`, `session`, `turn` (Codex), `toolUseId`, `tool`, `input`
 (strings truncated, secrets redacted), `result` (summary only: `isError`, sizes, first 500
-chars of text, never images), `cwd`, `ppid`, `browser` (true when the call is a browser
-operation), and `tabId` when the input names one.
+chars of text, never images), `cwd`, `ppid`, `agentPid`, `browser` (true when the call is a
+browser operation), and `tabId` when the input names one.
+
+`route` says how a browser call reaches Chrome:
+
+| `route` | Tools | Extra payload |
+| --- | --- | --- |
+| `extension` | Claude in Chrome, Codex `mcp__cua_repl` | `tabIds` |
+| `automation` | MCP tools named for Playwright, Puppeteer, DevTools, Selenium, browsers | `input` |
+| `shell` | Shell tools (`Bash`, Codex `shell`) whose command reaches Chrome | `input.command` (redacted, 2 KB), `routeKinds`, `urls`, `flags`; `result` keeps only `isError` and `textLength` |
+| `computer-use` | `mcp__computer-use__*` | `input` (action, app, coordinate; typed text as `textLength` only), `chromeTarget` (`true`, or `null` when the frontmost app decides), `chromeBy` when the app set it |
+
+`routeKinds` for shell commands: `open-url`, `applescript`, `launch-chrome`,
+`remote-debugging`, `automation-tool`, `profile-data`, `chrome-cli`. `flags`:
+`user-data-dir`, `remote-debugging`, `headless`, `incognito`. Shell commands that match none
+of these keep no input at all.
+
+## Mac sensor events
+
+| `cat` | Payload |
+| --- | --- |
+| `helper.started` / `helper.stopped` | An agent's Chrome native helper: `agent`, `pid`, `path`, signing identity |
+| `browser.started` | A Chrome-family main process worth recording: `pid`, `app`, `agent` and `agentPid` (nearest agent ancestor), `ancestorPids`, `ancestry`, `userDataDir`, `remoteDebugging`, `headless`, `automation`, `everyday` |
+| `browser.stopped` | `pid`, `app` |
+| `browser.remote_debugging` | Your Chrome's `DevToolsActivePort` appeared or went away: `enabled`, `detail` (`port N`) |
+| `health.remote_debugging_unknown` | Chrome's data folder couldn't be read |
+
+`session.tab_bound` (from the app) carries `chromeInstall`, the extension's `installId` for the
+tab's Chrome profile.

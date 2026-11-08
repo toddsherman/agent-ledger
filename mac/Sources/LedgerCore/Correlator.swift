@@ -38,6 +38,14 @@ public struct LiveStatus: Sendable, Equatable {
     public var humanInputSensorOK = true
     /// Recent hook arrivals (metadata only) for diagnosing agent integrations.
     public var recentHooks: [HookSummary] = []
+    /// Chrome profiles with the extension connected (one service worker per profile).
+    public var chromeInstalls = 0
+    /// False when a connected profile doesn't allow the extension in incognito windows.
+    public var incognitoCovered: Bool?
+    /// Remote debugging on your everyday Chrome ("port 9222"), nil when off or unknown.
+    public var remoteDebugging: String?
+    /// Chrome processes agents started themselves, described for the menu.
+    public var agentBrowsers: [String] = []
     public init() {}
 }
 
@@ -84,6 +92,10 @@ public final class Correlator {
         var tabs: [Int]
         var startedAt: Double
         var endedAt: Double?
+        var route = BrowserRoute.extensionRoute
+        var routeText = ""
+        /// Tabs bound because of this call (a tab it opened), which it explains best.
+        var boundTabs: [Int] = []
     }
 
     struct Runtime {
@@ -94,6 +106,13 @@ public final class Correlator {
         var pendingPrompt: LedgerEvent?
         var ledgerSession: String?
         var pendingTabCreateAt: Double?
+        var pendingTabReason: String?
+        var pendingTabCall: String?
+        /// Agent process IDs seen in this runtime's hooks (to link browsers it starts).
+        var pids: Set<Int32> = []
+        /// Last call that may drive Chrome over the DevTools protocol (automation tools,
+        /// remote debugging, launching Chrome).
+        var lastAutomationAt: Double?
     }
 
     final class Live {
@@ -142,6 +161,13 @@ public final class Correlator {
     private var pendingAttribution: [(id: Int64, event: LedgerEvent, tab: Int, session: String, due: Double)] = []
     /// Sessions that ended while attributions were pending.
     private var recentlyEnded: [String: Live] = [:]
+    /// The most recently activated tab (AppleScript acts on the active tab).
+    private var lastActiveTab: (tab: Int, t: Double)?
+    /// Extension connections by peer: one per Chrome profile.
+    private var installs: [Int: (installId: String, incognito: Bool?)] = [:]
+    private var everydayRemoteDebugging: String?
+    /// Agent-started browsers that are running, by PID.
+    private var agentBrowsers: [Int32: (info: JSONValue, session: String?)] = [:]
 
     public init(store: LedgerStore, settings: LedgerSettings = LedgerSettings()) {
         self.store = store
@@ -179,6 +205,18 @@ public final class Correlator {
         s.paused = settings.isPaused(now: now)
         s.humanInputSensorOK = humanInputSensorOK
         s.recentHooks = recentHooks
+        s.chromeInstalls = Set(installs.values.map { $0.installId }).count
+        let flags = installs.values.compactMap { $0.incognito }
+        s.incognitoCovered = flags.isEmpty ? nil : !flags.contains(false)
+        s.remoteDebugging = everydayRemoteDebugging
+        s.agentBrowsers = agentBrowsers.values.map { b in
+            let p = b.info
+            var bits = [Correlator.displayAgent(p["agent"]?.stringValue ?? "")]
+            bits.append(p["app"]?.stringValue ?? "Chrome")
+            if let r = p["remoteDebugging"]?.stringValue { bits.append("remote debugging \(r)") }
+            if p["headless"]?.boolValue == true { bits.append("headless") }
+            return bits.joined(separator: " · ")
+        }.sorted()
         return s
     }
 
@@ -283,6 +321,9 @@ public final class Correlator {
     private func process(_ e: LedgerEvent, peer: Int?, receivedAt: Double) {
         if e.src.hasPrefix("ext.") { lastExtensionEventAt = max(lastExtensionEventAt ?? 0, e.t) }
         if e.cat == "health.heartbeat" { return }
+        if e.cat == "health.extension_hello", let peer, let id = e.p?["installId"]?.stringValue {
+            installs[peer] = (id, e.p?["incognitoAllowed"]?.boolValue)
+        }
 
         if e.src.hasPrefix("hook.") {
             processHook(e, receivedAt: receivedAt)
@@ -363,6 +404,7 @@ public final class Correlator {
             if e.frame == 0 || e.frame == nil, let u = e.url { s.url = u }
         case "debugger.attached": s.debuggerAttached = true; s.debuggerChangedAt = e.t
         case "debugger.detached": s.debuggerAttached = false; s.debuggerChangedAt = e.t
+        case "tab.activated": lastActiveTab = (tab, e.t)
         default: break
         }
         tabs[tab] = s
@@ -397,7 +439,8 @@ public final class Correlator {
 
     private func runtimeKey(_ agent: HookAgent, _ session: String) -> String { "\(agent.rawValue):\(session)" }
 
-    private func processHook(_ e: LedgerEvent, receivedAt: Double) {
+    private func processHook(_ event: LedgerEvent, receivedAt: Double) {
+        var e = event
         let agent: HookAgent = e.src == "hook.codex" ? .codex : .claude
         lastHookAt[agent.agentName] = e.t
         recentHooks.append(HookSummary(t: e.t, agent: agent.agentName, cat: e.cat, tool: e.p?["tool"]?.stringValue,
@@ -409,7 +452,19 @@ public final class Correlator {
         let key = runtimeKey(agent, session)
         var rt = runtimes[key] ?? Runtime(agent: agent, session: session, lastActivityAt: e.t)
         rt.lastActivityAt = max(rt.lastActivityAt, e.t)
-        let browser = e.p?["browser"]?.boolValue ?? false
+        for k in ["agentPid", "ppid"] { if let pid = e.p?[k]?.intValue, pid > 1 { rt.pids.insert(Int32(pid)) } }
+        var browser = e.p?["browser"]?.boolValue ?? false
+        let route = e.p?["route"]?.stringValue ?? BrowserRoute.extensionRoute
+        if !browser, route == BrowserRoute.computerUse, e.p?["chromeTarget"] == .null, chromeWasFrontmost(at: e.t),
+           case .object(var o) = e.p {
+            // Whole-screen computer use while Chrome was in front acts on Chrome.
+            browser = true
+            o["browser"] = true
+            o["chromeBy"] = "Chrome was the frontmost app"
+            e.p = .object(o)
+        }
+        let kinds = e.p?["routeKinds"]?.arrayValue?.compactMap { $0.stringValue } ?? []
+        let flags = e.p?["flags"]?.arrayValue?.compactMap { $0.stringValue } ?? []
         var tabIds = e.p?["tabIds"]?.arrayValue?.compactMap { $0.intValue } ?? []
         if agent == .codex, browser, let code = e.p?["input"]?["code"]?.stringValue {
             // Codex names Chrome tab IDs in its code (cua.getTab("1511630265")); trust only IDs
@@ -438,6 +493,10 @@ public final class Correlator {
             rt.lastBrowserAt = e.t
             let callId = e.p?["toolUseId"]?.stringValue ?? "\(key)-\(e.t)"
             let tool = e.p?["tool"]?.stringValue ?? "?"
+            let routeText = Self.routeText(route: route, tool: tool, kinds: kinds, input: e.p?["input"])
+            if route == BrowserRoute.automation || !Set(kinds).isDisjoint(with: ["remote-debugging", "automation-tool", "launch-chrome"]) {
+                rt.lastAutomationAt = e.t
+            }
             if e.cat == "tool.pre" {
                 if agent == .codex {
                     // Codex runs its browser calls one at a time, so a new call ends any earlier one
@@ -447,29 +506,45 @@ public final class Correlator {
                     }
                 }
                 toolCalls[callId] = ToolCall(agent: agent, runtimeKey: key, toolUseId: callId, tool: tool, tabs: tabIds,
-                                             startedAt: e.t)
-                if tool.hasSuffix("tabs_create_mcp") || tool.contains("new_tab") { rt.pendingTabCreateAt = e.t }
+                                             startedAt: e.t, route: route, routeText: routeText)
+                if tool.hasSuffix("tabs_create_mcp") || tool.contains("new_tab") {
+                    rt.pendingTabCreateAt = e.t; rt.pendingTabReason = nil; rt.pendingTabCall = callId
+                }
+                if route == BrowserRoute.shell, kinds.contains("open-url") || kinds.contains("applescript") ||
+                    (kinds.contains("launch-chrome") && !flags.contains("user-data-dir")) {
+                    rt.pendingTabCreateAt = e.t
+                    rt.pendingTabCall = callId
+                    rt.pendingTabReason = "created right after \(agent == .claude ? "Claude Code" : "Codex") ran a \(routeText)"
+                }
             } else if var call = toolCalls[callId] {
                 call.endedAt = e.t
                 if call.tabs.isEmpty { call.tabs = tabIds }
                 toolCalls[callId] = call
             } else {
                 toolCalls[callId] = ToolCall(agent: agent, runtimeKey: key, toolUseId: callId, tool: tool, tabs: tabIds,
-                                             startedAt: e.t - 1000, endedAt: e.t)
+                                             startedAt: e.t - 1000, endedAt: e.t, route: route, routeText: routeText)
             }
             runtimes[key] = rt
             guard !settings.isPaused(now: e.t) else { decision("paused", reasons: ["recording paused"], tab: tabIds.first, at: e.t); return }
-            let l = ensureSession(for: key, at: e.t, reason: "\(agent == .claude ? "Claude Code" : "Codex") browser tool \(Self.shortTool(tool))")
+            let l = ensureSession(for: key, at: e.t, reason: "\(agent == .claude ? "Claude Code" : "Codex") \(routeText)")
             rt = runtimes[key]!
             for tab in tabIds {
                 bind(l, tab: tab, at: e.t, evidence: "\(Self.shortTool(tool)) named tab \(tab) (runtime-reported)")
                 if agent == .claude, let g = tabs[tab]?.groupId { groups[g] = (groups[g]?.title ?? "", agent.agentName) }
             }
-            if agent == .codex && tabIds.isEmpty {
-                // Codex hooks may not name tabs: bind tabs whose debugger attached around this call.
+            let viaDevTools = route == BrowserRoute.automation || kinds.contains("remote-debugging") || kinds.contains("automation-tool")
+            if (agent == .codex || viaDevTools) && tabIds.isEmpty {
+                // Codex hooks and DevTools-protocol tools don't name tabs: bind tabs whose debugger
+                // attached around this call.
+                let what = agent == .codex && route == BrowserRoute.extensionRoute ? "Codex browser call" : "\(Self.displayAgent(agent.agentName)) \(routeText)"
                 for (tab, s) in tabs where s.debuggerAttached && abs(s.debuggerChangedAt - e.t) < 5000 && claimable(s, by: l) {
-                    bind(l, tab: tab, at: e.t, evidence: "debugger attached within 5 s of a Codex browser call")
+                    bind(l, tab: tab, at: e.t, evidence: "debugger attached within 5 s of a \(what)")
                 }
+            }
+            if route == BrowserRoute.shell, kinds.contains("applescript"), let a = lastActiveTab, let s = tabs[a.tab], claimable(s, by: l) {
+                bind(l, tab: a.tab, at: e.t, evidence: "AppleScript sent to Chrome while tab \(a.tab) was the active tab (likely its target)")
+            }
+            if agent == .codex && route == BrowserRoute.extensionRoute && tabIds.isEmpty {
                 // Codex claims existing tabs by URL (cua.getTab({url}), claimTab): bind open tabs
                 // whose URL appears in the call's code.
                 if let code = e.p?["input"]?["code"]?.stringValue {
@@ -546,6 +621,21 @@ public final class Correlator {
         return current.count < minimumLabelLength && c.count >= minimumLabelLength
     }
 
+    /// How a browser call reached Chrome, for reasons and the timeline.
+    static func routeText(route: String, tool: String, kinds: [String], input: JSONValue?) -> String {
+        switch route {
+        case BrowserRoute.shell:
+            let names = ["open-url": "opened a URL", "applescript": "AppleScript", "launch-chrome": "started Chrome",
+                         "remote-debugging": "DevTools debugging port", "automation-tool": "automation tool",
+                         "profile-data": "read Chrome profile files", "chrome-cli": "chrome-cli"]
+            return "shell command that reaches Chrome (\(kinds.map { names[$0] ?? $0 }.joined(separator: ", ")))"
+        case BrowserRoute.automation: return "browser automation tool \(shortTool(tool))"
+        case BrowserRoute.computerUse:
+            return "computer use on Chrome (\(input?["action"]?.stringValue ?? shortTool(tool)))"
+        default: return "browser tool \(shortTool(tool))"
+        }
+    }
+
     static func shortTool(_ name: String) -> String {
         if let r = name.range(of: "__", options: .backwards) { return String(name[r.upperBound...]) }
         return name
@@ -591,10 +681,81 @@ public final class Correlator {
             helpers[agent] = set
             let affected = live.values.filter { $0.record.agent == agent && $0.record.state != "possible" }
             persist(e, receivedAt: receivedAt, link: Array(affected))
+        case "browser.started":
+            processBrowserStarted(e, receivedAt: receivedAt)
+        case "browser.stopped":
+            guard let pid = e.p?["pid"]?.intValue else { return }
+            let b = agentBrowsers.removeValue(forKey: Int32(pid))
+            let l = b?.session.flatMap { live[$0] }
+            persist(e, receivedAt: receivedAt, link: l.map { [$0] } ?? [])
+        case "browser.remote_debugging":
+            everydayRemoteDebugging = e.p?["enabled"]?.boolValue == true ? (e.p?["detail"]?.stringValue ?? "on") : nil
+            persist(e, receivedAt: receivedAt, link: live.values.filter { $0.record.state != "possible" })
         default:
             persist(e, receivedAt: receivedAt, link: [])
         }
     }
+
+    /// A Chrome-family browser started outside your normal Chrome: by an agent, for
+    /// automation, or with remote debugging. Agent-started browsers join (or start) that
+    /// agent's session.
+    private func processBrowserStarted(_ e: LedgerEvent, receivedAt: Double) {
+        guard let pid = e.p?["pid"]?.intValue else { return }
+        let app = e.p?["app"]?.stringValue ?? "Chrome"
+        var detail: [String] = []
+        if let rd = e.p?["remoteDebugging"]?.stringValue { detail.append("remote debugging \(rd)") }
+        if e.p?["headless"]?.boolValue == true { detail.append("headless") }
+        if e.p?["automation"]?.boolValue == true { detail.append("automation") }
+        if let dir = e.p?["userDataDir"]?.stringValue { detail.append("profile \(dir)") }
+        let suffix = detail.isEmpty ? "" : " (\(detail.joined(separator: ", ")))"
+
+        var linked: [Live] = []
+        if let agent = e.p?["agent"]?.stringValue {
+            let reason = "\(Self.displayAgent(agent)) started a separate \(app)\(suffix)"
+            // Match the nearest agent process only: agents run inside other agents (Codex started
+            // from a Claude Code shell), and the outer one didn't start this browser.
+            let agentPid = e.p?["agentPid"]?.intValue.map { Int32($0) }
+            let byPid = agentPid.flatMap { pid in
+                runtimes.first { $0.value.agent.agentName == agent && $0.value.pids.contains(pid) }?.key
+            }
+            let byRecency = runtimes.filter { $0.value.agent.agentName == agent && e.t - $0.value.lastActivityAt < 10 * 60_000 }
+                .max { $0.value.lastActivityAt < $1.value.lastActivityAt }?.key
+            if !settings.isPaused(now: e.t) {
+                if let key = byPid ?? byRecency, runtimes[key] != nil {
+                    runtimes[key]?.lastAutomationAt = e.t
+                    linked = [ensureSession(for: key, at: e.t, reason: reason)]
+                } else {
+                    linked = [ensureAgentSession(agent: agent, at: e.t, reason: reason)]
+                }
+                for l in linked { touch(l, at: e.t) }
+            }
+        } else if e.p?["everyday"]?.boolValue == true, let rd = e.p?["remoteDebugging"]?.stringValue {
+            everydayRemoteDebugging = rd
+        }
+        if e.p?["everyday"]?.boolValue != true || e.p?["agent"] != nil {
+            agentBrowsers[Int32(pid)] = (e.p ?? .null, linked.first?.record.id)
+        }
+        persist(e, receivedAt: receivedAt, link: linked)
+    }
+
+    /// The agent's most recent live session, or a new one when there is no runtime report to
+    /// key it by (hooks not installed, or the browser was started outside a hooked call).
+    private func ensureAgentSession(agent: String, at t: Double, reason: String) -> Live {
+        if let l = live.values.filter({ $0.record.agent == agent && $0.record.state != "ended" && $0.record.state != "possible" })
+            .max(by: { $0.record.lastActivityAt < $1.record.lastActivityAt }) { return l }
+        let rec = SessionRecord(id: Self.newSessionId(at: t), agent: agent, runtimeSession: nil, state: "recording",
+                                startedAt: t, lastActivityAt: t, startReason: reason, attribution: "likely",
+                                detectorVersion: Self.detectorVersion)
+        let l = Live(record: rec)
+        live[rec.id] = l
+        save(l)
+        persistApp(EventKind.context, "session.started",
+                   p: ["agent": .string(agent), "reason": .string(reason), "attribution": "likely"], link: [l], at: t)
+        return l
+    }
+
+    /// Forgets a Chrome profile's extension connection when its host disconnects.
+    public func peerDisconnected(_ peer: Int) { installs[peer] = nil }
 
     // MARK: Passive detection
 
@@ -613,8 +774,10 @@ public final class Correlator {
         if e.cat == "tab.created" {
             for (key, rt) in runtimes {
                 if let at = rt.pendingTabCreateAt, e.t - at >= -500, e.t - at < 5000, let sid = rt.ledgerSession, let l = live[sid] {
-                    bind(l, tab: tab, at: e.t, evidence: "created right after \(rt.agent == .claude ? "Claude Code" : "Codex") asked for a new tab")
-                    var r = rt; r.pendingTabCreateAt = nil; runtimes[key] = r
+                    bind(l, tab: tab, at: e.t, evidence: rt.pendingTabReason ??
+                        "created right after \(rt.agent == .claude ? "Claude Code" : "Codex") asked for a new tab")
+                    if let id = rt.pendingTabCall { toolCalls[id]?.boundTabs.append(tab) }
+                    var r = rt; r.pendingTabCreateAt = nil; r.pendingTabReason = nil; r.pendingTabCall = nil; runtimes[key] = r
                     return
                 }
             }
@@ -637,11 +800,21 @@ public final class Correlator {
             bind(l, tab: tab, at: e.t, evidence: "debugger attached during Codex browser activity")
             return
         }
+        // A DevTools-protocol route (automation tool, debugging port) used just before.
+        if let rt = runtimes.values.filter({ r in r.lastAutomationAt.map { e.t - $0 > -1000 && e.t - $0 < 10_000 } ?? false })
+            .max(by: { ($0.lastAutomationAt ?? 0) < ($1.lastAutomationAt ?? 0) }),
+           let sid = rt.ledgerSession, let l = live[sid] {
+            bind(l, tab: tab, at: e.t, evidence: "debugger attached right after \(Self.displayAgent(rt.agent.agentName)) used a DevTools-protocol route")
+            return
+        }
 
         let alive = helpers.filter { !$0.value.isEmpty }.map { $0.key }.sorted()
         guard !alive.isEmpty else {
-            decision("not-started", reasons: ["debugger attached to tab \(tab) but no agent browser helper is connected (DevTools or other tooling?)"],
-                     tab: tab, at: e.t)
+            var reasons = ["debugger attached to tab \(tab) but no agent browser helper is connected (DevTools or other tooling?)"]
+            if let rd = everydayRemoteDebugging {
+                reasons.append("remote debugging is on for this Chrome (\(rd)), so an outside DevTools client may be connected")
+            }
+            decision("not-started", reasons: reasons, tab: tab, at: e.t)
             return
         }
         // Claude Code reports its browser calls through hooks when installed; an attachment it
@@ -678,15 +851,18 @@ public final class Correlator {
         default: return nil
         }
         let before = config.humanWindowBeforeMs * (e.cat == "field.input" ? 2 : 1)
-        if let hit = humanInputs.last(where: { kinds.contains($0.kind) && $0.t >= e.t - before && $0.t <= e.t + config.humanWindowAfterMs }) {
+        // The input itself must land while Chrome is in front: typing in another app just before
+        // an agent brings Chrome forward (`open <url>`) isn't input to Chrome.
+        if let hit = humanInputs.last(where: { kinds.contains($0.kind) && $0.t >= e.t - before && $0.t <= e.t + config.humanWindowAfterMs &&
+            chromeWasFrontmost(at: $0.t, slack: 0) }) {
             return "physical \(hit.kind == .mouseDown ? "mouse click" : "key press") \(Int(abs(e.t - hit.t))) ms from the event while Chrome was frontmost"
         }
         return nil
     }
 
-    private func chromeWasFrontmost(at t: Double) -> Bool {
-        let windowFocused = windowFocus.last(where: { $0.t <= t + 200 })?.focused ?? true
-        guard let last = frontmost.last(where: { $0.t <= t + 200 }) else { return windowFocused }
+    private func chromeWasFrontmost(at t: Double, slack: Double = 200) -> Bool {
+        let windowFocused = windowFocus.last(where: { $0.t <= t + slack })?.focused ?? true
+        guard let last = frontmost.last(where: { $0.t <= t + slack }) else { return windowFocused }
         return last.bundleId.hasPrefix("com.google.Chrome") && windowFocused
     }
 
@@ -765,15 +941,25 @@ public final class Correlator {
             agentLabel = "identified"
             scope = "operation"
             reasons.append("Claude Code reported \(Self.shortTool(call.tool)) on tab \(tab) (call \(call.toolUseId.suffix(8)))")
-        } else if l.record.agent == HookAgent.codex.agentName,
-                  let call = toolCalls.values.first(where: { c in
-                      c.agent == .codex && c.runtimeKey == l.runtimeKey && e.t >= c.startedAt - config.hookSlackBeforeMs &&
+        } else if let call = toolCalls.values.filter({ c in
+                      c.runtimeKey == l.runtimeKey && (c.agent == .codex || c.route != BrowserRoute.extensionRoute) &&
+                          e.t >= c.startedAt - config.hookSlackBeforeMs &&
                           e.t <= (c.endedAt ?? (c.startedAt + config.hookOpenMaxMs)) + config.hookSlackAfterMs
+                  }).max(by: { a, b in
+                      let ka = (a.boundTabs.contains(tab) || a.tabs.contains(tab) ? 1 : 0, a.startedAt <= e.t ? a.startedAt : -a.startedAt)
+                      let kb = (b.boundTabs.contains(tab) || b.tabs.contains(tab) ? 1 : 0, b.startedAt <= e.t ? b.startedAt : -b.startedAt)
+                      return ka < kb
                   }) {
-            agentActor = "agent:codex"
+            // Calls that don't name tabs (Codex, shell commands, automation tools) cover the
+            // session's tabs for their duration.
+            agentActor = "agent:\(call.agent.agentName)"
             agentLabel = call.tabs.contains(tab) ? "identified" : "likely"
             scope = call.tabs.contains(tab) ? "operation" : "runtime-session"
-            reasons.append("Codex reported a browser call (\(Self.shortTool(call.tool))) in this session at the time")
+            if call.agent == .codex && call.route == BrowserRoute.extensionRoute {
+                reasons.append("Codex reported a browser call (\(Self.shortTool(call.tool))) in this session at the time")
+            } else {
+                reasons.append("\(Self.displayAgent(call.agent.agentName)) ran a \(call.routeText) in this session at the time")
+            }
         } else if tabs[tab]?.debuggerAttached == true, l.record.agent != "unknown" {
             agentActor = "agent:\(l.record.agent)"
             agentLabel = "likely"
@@ -839,8 +1025,9 @@ public final class Correlator {
         guard isNew else { return }
         if l.record.state != "possible" {
             try? store.bindTab(session: l.record.id, tab: tab, at: t, evidence: evidence)
-            persistApp(EventKind.context, "session.tab_bound", p: ["tab": .number(Double(tab)), "evidence": .string(evidence)],
-                       link: [l], at: t, tab: tab)
+            var bp: [String: JSONValue] = ["tab": .number(Double(tab)), "evidence": .string(evidence)]
+            if let peer = s.peer, let inst = installs[peer] { bp["chromeInstall"] = .string(inst.installId) }
+            persistApp(EventKind.context, "session.tab_bound", p: .object(bp), link: [l], at: t, tab: tab)
             flushMemory(for: l, since: t - config.tabFlushMs)
         }
         let policy: JSONValue = ["values": .bool(settings.valuesEnabled), "prebufferMs": 60_000, "maxValue": 2048]

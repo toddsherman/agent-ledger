@@ -57,6 +57,11 @@ public enum EventFormatter {
         return bits.isEmpty ? tool : "\(tool)(\(bits.joined(separator: ", ")))"
     }
 
+    static func routeLabel(_ p: JSONValue?) -> String {
+        let kinds = p?["routeKinds"]?.arrayValue?.compactMap { $0.stringValue } ?? []
+        return Correlator.routeText(route: BrowserRoute.shell, tool: "", kinds: kinds, input: nil)
+    }
+
     public static func agentName(_ p: JSONValue?) -> String {
         Correlator.displayAgent(p?["agent"]?.stringValue ?? "")
     }
@@ -119,7 +124,18 @@ public enum EventFormatter {
             let by = p?["byExtensionName"]?.stringValue.map { " by extension \($0)" } ?? ""
             return "Download started: \(p?["filename"]?.stringValue ?? path(e.url))\(by)"
         case "download.changed": return "Download \(p?["state"]?.stringValue ?? p?["error"]?.stringValue ?? "updated")"
+        case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.shell:
+            return "\(agentName(p)) ran a \(routeLabel(p)): \(quote(p?["input"]?["command"]?.stringValue, max: 140))"
+        case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.automation:
+            return "\(agentName(p)) used browser automation: \(toolSummary(p))"
+        case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.computerUse:
+            let app = p?["input"]?["app"]?.stringValue.map { " in \($0)" } ?? ""
+            let by = p?["chromeBy"]?.stringValue.map { " (\($0))" } ?? ""
+            return "\(agentName(p)) computer use on Chrome: \(p?["input"]?["action"]?.stringValue ?? Correlator.shortTool(p?["tool"]?.stringValue ?? ""))\(app)\(by)"
         case "tool.pre": return "\(agentName(p)) started \(toolSummary(p))"
+        case "tool.post" where p?["route"]?.stringValue == BrowserRoute.shell:
+            let err = p?["result"]?["isError"]?.boolValue == true ? " with an error" : ""
+            return "\(agentName(p)) finished the shell command\(err) (output not recorded)"
         case "tool.post":
             let preview = p?["result"]?["preview"]?.stringValue.flatMap { $0.isEmpty ? nil : ": " + quote($0, max: 100) } ?? ""
             let err = p?["result"]?["isError"]?.boolValue == true ? " (error)" : ""
@@ -140,6 +156,25 @@ public enum EventFormatter {
             return "Detector \(p?["decision"]?.stringValue ?? ""): \(p?["reasons"]?.arrayValue?.compactMap { $0.stringValue }.joined(separator: "; ") ?? "")"
         case "helper.started": return "\(Correlator.displayAgent(p?["agent"]?.stringValue ?? "")) browser helper connected (pid \(p?["pid"]?.intValue ?? 0))"
         case "helper.stopped": return "\(Correlator.displayAgent(p?["agent"]?.stringValue ?? "")) browser helper disconnected"
+        case "browser.started":
+            var bits: [String] = []
+            if let rd = p?["remoteDebugging"]?.stringValue { bits.append("remote debugging \(rd)") }
+            if p?["headless"]?.boolValue == true { bits.append("headless") }
+            if p?["automation"]?.boolValue == true { bits.append("automation flag") }
+            if let d = p?["userDataDir"]?.stringValue { bits.append("profile folder \(d)") }
+            let extra = bits.isEmpty ? "" : " (\(bits.joined(separator: ", ")))"
+            let app = p?["app"]?.stringValue ?? "Chrome"
+            if let a = p?["agent"]?.stringValue {
+                return "\(Correlator.displayAgent(a)) started a separate \(app), pid \(p?["pid"]?.intValue ?? 0)\(extra)"
+            }
+            if p?["everyday"]?.boolValue == true { return "Your Chrome started\(extra)" }
+            return "\(app) started outside your normal Chrome profile\(extra)"
+        case "browser.stopped": return "\(p?["app"]?.stringValue ?? "Browser") pid \(p?["pid"]?.intValue ?? 0) quit"
+        case "browser.remote_debugging":
+            return p?["enabled"]?.boolValue == true
+                ? "Remote debugging turned on in your Chrome (\(p?["detail"]?.stringValue ?? "on")): DevTools-protocol clients can control it"
+                : "Remote debugging turned off in your Chrome"
+        case "health.remote_debugging_unknown": return "Can't tell whether Chrome's remote debugging is on: \(p?["reason"]?.stringValue ?? "")"
         case "ext.agents":
             let names = p?["agents"]?.arrayValue?.compactMap { a -> String? in
                 guard let n = a["name"]?.stringValue else { return nil }

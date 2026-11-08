@@ -31,13 +31,34 @@ public enum HookInstaller {
     static func plan(for agent: HookAgent) -> [(event: String, matcher: String?, timeout: Int)] {
         switch agent {
         case .claude:
-            let browser = "mcp__.*claude-in-chrome.*"
+            // Claude in Chrome, other browser-automation and computer-use MCP tools, and shell
+            // commands (only the ones that reach Chrome are kept).
+            let browser = claudeMatcher
             return [("PreToolUse", browser, 10), ("PostToolUse", browser, 10), ("PostToolUseFailure", browser, 10),
                     ("UserPromptSubmit", nil, 10), ("Stop", nil, 10), ("SessionStart", nil, 10), ("SessionEnd", nil, 10)]
         case .codex:
             return [("PreToolUse", nil, 10), ("PostToolUse", nil, 10), ("UserPromptSubmit", nil, 10), ("Stop", nil, 10),
                     ("SessionStart", nil, 10), ("SessionEnd", nil, 3), ("Interrupt", nil, 3)]
         }
+    }
+
+    static let claudeMatcher =
+        "^(Bash|mcp__.*([Cc]laude-in-[Cc]hrome|claude_in_chrome|[Pp]laywright|[Pp]uppeteer|[Cc]hrome|[Dd]ev[Tt]ools|[Bb]rowser|[Ss]elenium|[Cc]omputer[-_][Uu]se).*)$"
+
+    /// Installed Agent Ledger hooks whose matchers or events differ from the current plan
+    /// (an older version installed them). Only meaningful when hooks are installed.
+    public static func needsUpgrade(agent: HookAgent, url: URL? = nil) -> Bool {
+        let u = url ?? (agent == .claude ? claudeSettingsURL : codexHooksURL)
+        guard let obj = try? load(u), let hooks = obj["hooks"] as? [String: Any] else { return false }
+        var installed: Set<String> = []
+        for (event, value) in hooks {
+            for g in value as? [[String: Any]] ?? [] where (g["hooks"] as? [Any])?.contains(where: isOurs) ?? false {
+                installed.insert("\(event)|\(g["matcher"] as? String ?? "")")
+            }
+        }
+        guard !installed.isEmpty else { return false }
+        let wanted = Set(plan(for: agent).map { "\($0.event)|\($0.matcher ?? "")" })
+        return installed != wanted
     }
 
     static func load(_ url: URL) throws -> [String: Any] {

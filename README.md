@@ -43,6 +43,12 @@ The design rationale is in [PLAN.md](PLAN.md) and the original brief is [browser
   - `role=status`/`alert` text, such as "Saved" toasts
   - Downloads
   - The agent's own tool-call reports
+- **Other ways agents reach Chrome** (recorded whenever they happen):
+  - shell commands that open a URL in Chrome, send it AppleScript, start it, use its debugging port, or read its profile files (the command only, never its output)
+  - browser-automation tools such as Playwright or Chrome DevTools MCP
+  - computer use aimed at Chrome
+  - separate Chrome processes an agent starts, with their debugging port and profile folder
+  - remote debugging turned on in your own Chrome
 - **Never captured:**
   - Password, card, one-time-code and hidden fields
   - Clipboard contents
