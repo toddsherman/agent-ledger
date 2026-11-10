@@ -78,6 +78,8 @@ final class AppModel: ObservableObject {
         if let err = KeepRunning.apply(enabled: s.keepRunning) { message = err }
         correlator.onSessionEnded = { [weak self] s, _ in self?.sessionEnded(s) }
         notifier.start()
+        // A copy that was started hidden (older keep-alive builds did this) can't show its menu panel.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if NSApp.isHidden { NSApp.unhide(nil) } }
         let server = self.server
         correlator.sendCommand = { cmd, peer in
             var line = cmd.canonicalData()

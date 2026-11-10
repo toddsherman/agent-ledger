@@ -3,6 +3,10 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.2.1
+
+- Fixed: after the app was restarted automatically (at login, after an update, or after it stopped), clicking its menu bar icon did nothing.
+
 ## 0.2.0
 
 - The app installs itself in /Applications and is restarted if it stops.

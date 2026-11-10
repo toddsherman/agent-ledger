@@ -61,7 +61,8 @@ public enum KeepAlive {
             out["downFrom"] = .number(downSince ?? now)
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            p.arguments = ["-g", "-j", appPath]
+            // Not hidden (-j): a hidden menu bar app can't show its panel when its icon is clicked.
+            p.arguments = ["-g", appPath]
             try? p.run()
             p.waitUntilExit()
         } else if let last = state?["lastRelaunchAt"] { out["lastRelaunchAt"] = last; out["downFrom"] = state?["downFrom"] ?? .null }
