@@ -56,7 +56,7 @@ The design rationale is in [PLAN.md](PLAN.md) and the original brief is [browser
   - Screenshots
 - **Redaction:** secret-looking values (keys, JWTs, card numbers, SSNs) are redacted and values are cut at 2 KB. Value capture can be turned off, and sites can be excluded.
 - **Task labels:** the prompt that started a session's browser work becomes its label (500 characters max).
-- **Tamper evidence:** the ledger is append-only and hash-chained (`ledgerctl verify`). That exposes casual edits, but it can't stop a process that rewrites the whole file.
+- **Tamper evidence:** the ledger is append-only and hash-chained (`ledgerctl verify`). That exposes casual edits, but it can't stop a process that rewrites the whole file. Each export comes with a proof file (`ledgerctl verify-proof`), and `ledgerctl head` prints the last hash so you can keep a copy somewhere else.
 
 ## Attribution labels
 
@@ -74,7 +74,8 @@ Corrections ("This was me", "Wrong agent", "Confirm agent did this") go in a sep
 ## Command line
 
 ```bash
-ledgerctl status | sessions | export <session-id> | verify
+ledgerctl status | sessions | export <session-id> | report <session-id> | reconcile <session-id>
+ledgerctl verify | verify-proof <file.proof.jsonl> | head
 ledgerctl install-host | uninstall-host
 ledgerctl install-hooks <claude|codex> | uninstall-hooks <claude|codex>
 ```

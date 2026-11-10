@@ -175,6 +175,15 @@ public enum EventFormatter {
                 ? "Remote debugging turned on in your Chrome (\(p?["detail"]?.stringValue ?? "on")): DevTools-protocol clients can control it"
                 : "Remote debugging turned off in your Chrome"
         case "health.remote_debugging_unknown": return "Can't tell whether Chrome's remote debugging is on: \(p?["reason"]?.stringValue ?? "")"
+        case "health.hooks_restored": return "The \(Correlator.displayAgent(p?["agent"]?.stringValue ?? "")) hooks are back in place"
+        case "health.extension_reconnected": return "The Agent Ledger extension reconnected after \(EventFormatter.span(Int(p?["seconds"]?.doubleValue ?? 0)))"
+        case "selftest.result": return "Recorder self-test passed (\(p?["checked"]?.stringValue ?? ""))"
+        case "version.changed":
+            return "\(p?["what"]?.stringValue ?? "A component") changed from \(p?["from"]?.stringValue ?? "?") to \(p?["to"]?.stringValue ?? "?")"
+        case "reconcile.result": return AgentLogs.resultText(p)
+        case "tool.logged":
+            return "From the agent's own log (no hook arrived): \(Correlator.shortTool(p?["tool"]?.stringValue ?? "tool"))"
+        case "alert.raised": return "Alert: \(p?["title"]?.stringValue ?? "") — \(p?["body"]?.stringValue ?? "")"
         case "ext.agents":
             let names = p?["agents"]?.arrayValue?.compactMap { a -> String? in
                 guard let n = a["name"]?.stringValue else { return nil }
@@ -185,6 +194,12 @@ public enum EventFormatter {
             if e.kind == EventKind.gap { return gapText(e) }
             return e.cat
         }
+    }
+
+    public static func span(_ secs: Int) -> String {
+        if secs < 90 { return "\(secs) s" }
+        if secs < 5400 { return "\(secs / 60) min" }
+        return String(format: "%.1f h", Double(secs) / 3600)
     }
 
     public static func gapText(_ e: LedgerEvent) -> String {
@@ -201,6 +216,15 @@ public enum EventFormatter {
         case "gap.extension_queue_overflow": return "Gap: \(p?["dropped"]?.intValue ?? 0) events dropped (extension queue full)"
         case "gap.app_restarted": return "Gap: the app restarted during this session"
         case "gap.excluded_site": return "Gap: navigated to an excluded site; not recorded"
+        case "gap.recorder_stopped":
+            let secs = Int(p?["seconds"]?.doubleValue ?? 0)
+            return "Gap: the recorder wasn't running for \(EventFormatter.span(secs)) (\(HealthText.stopReason(p?["reason"]?.stringValue)))"
+        case "gap.hooks_removed": return "Gap: the \(Correlator.displayAgent(p?["agent"]?.stringValue ?? "")) hooks were removed or changed outside Agent Ledger"
+        case "gap.hook_binary_missing": return "Gap: the hook program is missing, so agents can't report to the recorder"
+        case "gap.extension_disconnected": return "Gap: Chrome was running without the Agent Ledger extension connected"
+        case "gap.ledger_changed": return "Gap: the ledger was changed outside Agent Ledger (\(p?["detail"]?.stringValue ?? "unknown change"))"
+        case "gap.selftest_failed": return "Gap: the recorder's self-test failed (\(p?["failed"]?.stringValue ?? ""))"
+        case "gap.dependency_changed": return "Gap: \(p?["detail"]?.stringValue ?? "an agent update changed something the recorder depends on")"
         case "gap.tab_missing": return "Gap: tab was gone before recording could start"
         default: return "Gap: \(e.cat)"
         }

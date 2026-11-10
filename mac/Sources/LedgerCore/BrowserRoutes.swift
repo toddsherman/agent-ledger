@@ -27,6 +27,12 @@ public enum BrowserRoute {
         return nil
     }
 
+    /// Codex ends a browser task with a REPL call that carries only a summary and runs no code.
+    public static func isClosingCall(agent: HookAgent, toolName: String, input: JSONValue?) -> Bool {
+        guard agent == .codex, toolName.lowercased().contains("cua_repl"), let o = input?.objectValue else { return false }
+        return o["code"] == nil && o["completion_summary"] != nil
+    }
+
     static let shellToolWords = ["bash", "shell", "exec", "command", "terminal"]
 
     /// The shell script in a tool input, for tools that run shell commands.

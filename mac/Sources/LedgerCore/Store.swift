@@ -88,10 +88,100 @@ public final class LedgerStore: @unchecked Sendable {
 
     public static let genesisHash = String(repeating: "0", count: 64)
 
-    public init(url: URL) throws {
+    /// What the anchor file said about the ledger when it was opened (nil without an anchor file).
+    public private(set) var openingCheck: AnchorCheck?
+    private let anchorURL: URL?
+    private let fileURL: URL
+    private let openedInode: UInt64?
+
+    /// `anchorURL`: a small file holding the last event's ID and hash, rewritten on every append.
+    /// Only the app passes it; read-only tools leave it nil.
+    public init(url: URL, anchorURL: URL? = nil) throws {
         db = try SQLiteDB(path: url.path)
+        fileURL = url
+        self.anchorURL = anchorURL
+        openedInode = Self.inode(url)
         try migrate()
         lastHash = try loadLastHash()
+        if let anchorURL {
+            openingCheck = try checkAnchor(Anchor.read(anchorURL))
+            writeAnchor()
+        }
+    }
+
+    static func inode(_ url: URL) -> UInt64? {
+        ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.systemFileNumber] as? NSNumber)?.uint64Value
+    }
+
+    public struct Anchor: Equatable, Sendable {
+        public var id: Int64
+        public var hash: String
+        public var at: Double
+        public init(id: Int64, hash: String, at: Double) { self.id = id; self.hash = hash; self.at = at }
+
+        public static func read(_ url: URL) -> Anchor? {
+            guard let d = try? Data(contentsOf: url), let j = JSONValue.parse(d), let h = j["hash"]?.stringValue,
+                  let id = j["id"]?.doubleValue else { return nil }
+            return Anchor(id: Int64(id), hash: h, at: j["at"]?.doubleValue ?? 0)
+        }
+    }
+
+    public enum AnchorCheck: Equatable, Sendable {
+        case ok
+        /// No anchor file yet (first run of a version that keeps one).
+        case noAnchor
+        /// The event the anchor names is gone, or its hash differs.
+        case removedOrChanged(anchorId: Int64, lastId: Int64)
+        /// Events were appended while the app wasn't running.
+        case addedOutside(count: Int, firstId: Int64)
+
+        public var changed: Bool { self != .ok && self != .noAnchor }
+    }
+
+    func checkAnchor(_ a: Anchor?) throws -> AnchorCheck {
+        guard let a else { return .noAnchor }
+        let last = try db.query("SELECT id FROM events ORDER BY id DESC LIMIT 1").first?.int64("id") ?? 0
+        if a.id == 0 {
+            // The ledger was empty; anything present now was added outside the app.
+        } else if let row = try db.query("SELECT hash FROM events WHERE id = ?", [.int(a.id)]).first {
+            if row.string("hash") != a.hash { return .removedOrChanged(anchorId: a.id, lastId: last) }
+        } else {
+            // A retention purge can remove the anchored event; the chain anchor then carries its hash.
+            let purged = try db.query("SELECT value FROM meta WHERE key = 'chain_anchor'").first?.string("value")
+            if !(last == 0 && purged == a.hash) { return .removedOrChanged(anchorId: a.id, lastId: last) }
+        }
+        // The app writes the anchor right after each append; a crash in between leaves at most one batch.
+        let later = try db.query("SELECT id, received_at FROM events WHERE id > ? ORDER BY id", [.int(a.id)])
+        let outside = later.filter { ($0.double("received_at") ?? 0) > a.at + 2000 }
+        if let first = outside.first?.int64("id") { return .addedOutside(count: outside.count, firstId: first) }
+        return .ok
+    }
+
+    private func writeAnchor() {
+        guard let anchorURL else { return }
+        let id = (try? db.query("SELECT id FROM events ORDER BY id DESC LIMIT 1").first?.int64("id")) ?? nil
+        let j: JSONValue = ["id": .number(Double(id ?? 0)), "hash": .string(lastHash), "at": .number(nowMs())]
+        try? j.canonicalData().write(to: anchorURL, options: .atomic)
+    }
+
+    public enum LiveCheck: Equatable, Sendable { case ok, fileReplaced, tailChanged }
+
+    /// Cheap check while running: the database file is still the one opened, and its newest
+    /// event is the one this process wrote last.
+    public func liveCheck() -> LiveCheck {
+        locked {
+            if let openedInode, Self.inode(fileURL) != openedInode { return .fileReplaced }
+            if let h = try? loadLastHash(), h != lastHash { return .tailChanged }
+            return .ok
+        }
+    }
+
+    /// Accepts the ledger as it is now (after a change was reported), so one change is reported once.
+    public func acceptCurrentState() {
+        locked {
+            if let h = try? loadLastHash() { lastHash = h }
+            writeAnchor()
+        }
     }
 
     private func locked<T>(_ body: () throws -> T) rethrows -> T {
@@ -166,10 +256,17 @@ public final class LedgerStore: @unchecked Sendable {
     static func hashMaterial(prev: String, src: String, inst: String?, seq: Int?, observedAt: Double,
                              receivedAt: Double, kind: String, cat: String, tab: Int?, win: Int?, frame: Int?,
                              doc: String?, url: String?, rec: Bool?, pre: Bool?, payload: String?) -> String {
+        return hashFields(prev: prev, src: src, inst: inst, seq: seq, observedAt: observedAt, receivedAt: receivedAt,
+                          kind: kind, cat: cat, tab: tab, win: win, frame: frame, doc: doc, url: url, rec: rec,
+                          pre: pre, payload: payload).joined(separator: "\u{1f}")
+    }
+
+    static func hashFields(prev: String, src: String, inst: String?, seq: Int?, observedAt: Double,
+                           receivedAt: Double, kind: String, cat: String, tab: Int?, win: Int?, frame: Int?,
+                           doc: String?, url: String?, rec: Bool?, pre: Bool?, payload: String?) -> [String] {
         func s(_ x: Any?) -> String { x.map { "\($0)" } ?? "" }
         return [prev, src, s(inst), s(seq), fmt(observedAt), fmt(receivedAt), kind, cat, s(tab), s(win), s(frame),
                 s(doc), s(url), rec.map { $0 ? "1" : "0" } ?? "", pre.map { $0 ? "1" : "0" } ?? "", s(payload)]
-            .joined(separator: "\u{1f}")
     }
 
     static func sha256(_ s: String) -> String {
@@ -180,6 +277,7 @@ public final class LedgerStore: @unchecked Sendable {
     @discardableResult
     public func append(_ events: [LedgerEvent], receivedAt: Double = nowMs()) throws -> [Int64] {
         guard !events.isEmpty else { return [] }
+        defer { appended() }
         return try locked {
             try db.transaction {
                 let stmt = try db.prepare("""
@@ -210,6 +308,8 @@ public final class LedgerStore: @unchecked Sendable {
         }
     }
 
+    private func appended() { locked { writeAnchor() } }
+
     static func decodeEvent(_ r: Row) -> StoredEvent {
         var e = LedgerEvent(src: r.string("src") ?? "?", inst: r.string("inst"), seq: r.int("seq"),
                             t: r.double("observed_at") ?? 0, kind: r.string("kind") ?? "?",
@@ -228,6 +328,14 @@ public final class LedgerStore: @unchecked Sendable {
             SELECT e.* FROM events e JOIN session_events se ON se.event_id = e.id
             WHERE se.session_id = ? ORDER BY e.observed_at, e.id
             """, [.text(id)]).map(Self.decodeEvent)
+        }
+    }
+
+    /// Events from one source in a time range (ms), oldest first.
+    public func events(from: Double, to: Double, src: String) throws -> [StoredEvent] {
+        try locked {
+            try db.query("SELECT * FROM events WHERE observed_at >= ? AND observed_at <= ? AND src = ? ORDER BY id",
+                         [.double(from), .double(to), .text(src)]).map(Self.decodeEvent)
         }
     }
 
@@ -463,5 +571,49 @@ public final class LedgerStore: @unchecked Sendable {
 
     public func setMeta(_ key: String, _ value: String) throws {
         try locked { try db.run("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", [.text(key), .text(value)]) }
+    }
+}
+
+extension LedgerStore {
+    public struct ProofRow {
+        public var id: Int64
+        public var prev: String
+        public var hash: String
+        /// The hashed fields after the previous hash; nil for events outside the session.
+        public var material: [String]?
+    }
+
+    /// Every event between the session's first and last, in ledger order.
+    public func proofRows(session id: String) throws -> [ProofRow] {
+        try locked {
+            guard let range = try db.query("""
+                SELECT MIN(event_id) AS a, MAX(event_id) AS b FROM session_events WHERE session_id = ?
+                """, [.text(id)]).first, let a = range.int64("a"), let b = range.int64("b") else { return [] }
+            return try db.query("""
+                SELECT e.*, (SELECT 1 FROM session_events se WHERE se.event_id = e.id AND se.session_id = ?) AS mine
+                FROM events e WHERE e.id >= ? AND e.id <= ? ORDER BY e.id
+                """, [.text(id), .int(a), .int(b)]).map { r in
+                var material: [String]?
+                if r.int("mine") == 1 {
+                    let full = Self.hashFields(
+                        prev: "", src: r.string("src") ?? "", inst: r.string("inst"), seq: r.int("seq"),
+                        observedAt: r.double("observed_at") ?? 0, receivedAt: r.double("received_at") ?? 0,
+                        kind: r.string("kind") ?? "", cat: r.string("cat") ?? "", tab: r.int("tab"), win: r.int("win"),
+                        frame: r.int("frame"), doc: r.string("doc"), url: r.string("url"), rec: r.bool("rec"),
+                        pre: r.bool("pre"), payload: r.string("payload"))
+                    material = Array(full.dropFirst())
+                }
+                return ProofRow(id: r.int64("id") ?? 0, prev: r.string("prev_hash") ?? "", hash: r.string("hash") ?? "",
+                                material: material)
+            }
+        }
+    }
+
+    /// The last event's ID and hash: the value to keep somewhere outside this Mac.
+    public func chainHead() throws -> (id: Int64, hash: String) {
+        try locked {
+            guard let r = try db.query("SELECT id, hash FROM events ORDER BY id DESC LIMIT 1").first else { return (0, Self.genesisHash) }
+            return (r.int64("id") ?? 0, r.string("hash") ?? "")
+        }
     }
 }

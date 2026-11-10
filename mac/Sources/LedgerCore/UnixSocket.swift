@@ -118,6 +118,8 @@ public final class IngestServer: @unchecked Sendable {
         public let id: Int
         public let pid: pid_t
         public var role: String?
+        /// The connecting program, read when the connection was accepted.
+        public var path: String?
     }
 
     public var onLine: ((Peer, Data) -> Void)?
@@ -178,7 +180,7 @@ public final class IngestServer: @unchecked Sendable {
             setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) | O_NONBLOCK)
             let id = nextID; nextID += 1
-            let peer = Peer(id: id, pid: pid, role: nil)
+            let peer = Peer(id: id, pid: pid, role: nil, path: pid > 0 ? Processes.path(of: pid) : nil)
             let src = DispatchSource.makeReadSource(fileDescriptor: c, queue: queue)
             src.setEventHandler { [weak self] in self?.readClient(id) }
             src.setCancelHandler { close(c) }

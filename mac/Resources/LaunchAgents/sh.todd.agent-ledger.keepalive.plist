@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>sh.todd.agent-ledger.keepalive</string>
+	<key>BundleProgram</key>
+	<string>Contents/Helpers/ledgerctl</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>ledgerctl</string>
+		<string>ensure-running</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>15</integer>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>sh.todd.agent-ledger</string>
+	</array>
+</dict>
+</plist>

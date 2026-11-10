@@ -18,7 +18,17 @@ struct LedgerWindow: View {
     var body: some View {
         NavigationSplitView {
             List(filtered, selection: $selection) { s in
-                SessionRow(summary: s).tag(s.id)
+                SessionRow(summary: s, digest: model.digests[s.id]).tag(s.id)
+            }
+            .safeAreaInset(edge: .bottom) {
+                if !model.unreviewed.isEmpty {
+                    HStack {
+                        Text("\(model.unreviewed.count) to review").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Mark all reviewed") { model.markAllReviewed() }.buttonStyle(.borderless).font(.caption)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6).background(.bar)
+                }
             }
             .searchable(text: $search, placement: .sidebar, prompt: "Site, task, agent")
             .navigationSplitViewColumnWidth(min: 280, ideal: 330)
@@ -46,6 +56,7 @@ struct LedgerWindow: View {
 
 struct SessionRow: View {
     let summary: SessionSummary
+    var digest: AppModel.Digest?
     var s: SessionRecord { summary.session }
 
     var body: some View {
@@ -56,14 +67,24 @@ struct SessionRow: View {
                 Chip(text: s.attribution.capitalized, color: Palette.attribution(s.attribution))
                 if s.state != "ended" { Chip(text: s.state.capitalized, color: .red) }
                 Spacer()
+                if s.state == "ended", digest?.reviewed == false {
+                    Circle().fill(Color.accentColor).frame(width: 7, height: 7).help("Not reviewed yet")
+                }
                 Text(Fmt.day(s.startedAt)).font(.caption2).foregroundStyle(.secondary)
             }
             Text(s.taskLabel ?? (summary.hosts.first.map { "Work on \($0)" } ?? "Untitled session"))
                 .font(.callout).lineLimit(2)
+            if let d = digest {
+                Text(d.oneLine).font(.caption).foregroundStyle(d.changes > 0 ? Color.primary : Color.secondary).lineLimit(2)
+            }
             HStack(spacing: 8) {
                 Text(summary.hosts.prefix(3).joined(separator: ", ")).lineLimit(1)
                 Spacer()
-                Label("\(summary.changeCount)", systemImage: "pencil.and.list.clipboard")
+                if let d = digest {
+                    Label("\(d.changes)", systemImage: "pencil.and.list.clipboard").foregroundStyle(d.changes > 0 ? Color.red : Color.secondary)
+                        .help("Changes")
+                    if d.riskyScripts > 0 { Label("\(d.riskyScripts)", systemImage: "curlybraces").foregroundStyle(.orange).help("Scripts that could have changed something") }
+                }
                 Label("\(summary.tabCount)", systemImage: "rectangle.on.rectangle")
                 if summary.gapCount > 0 { Label("\(summary.gapCount)", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
             }
@@ -74,7 +95,7 @@ struct SessionRow: View {
 }
 
 enum DetailTab: String, CaseIterable, Identifiable {
-    case changes = "Changes", timeline = "Timeline", evidence = "Evidence"
+    case summary = "Summary", changes = "Changes", timeline = "Timeline", evidence = "Evidence"
     var id: String { rawValue }
 }
 
@@ -82,7 +103,7 @@ struct SessionDetailView: View {
     @EnvironmentObject var model: AppModel
     let sessionId: String
     @State private var detail: AppModel.SessionDetail?
-    @State private var tab: DetailTab = .changes
+    @State private var tab: DetailTab = .summary
     @State private var actorFilter = "all"
     @State private var showNoise = false
     @State private var editingLabel = false
@@ -96,7 +117,7 @@ struct SessionDetailView: View {
                     Divider()
                     HStack {
                         Picker("", selection: $tab) { ForEach(DetailTab.allCases) { Text($0.rawValue).tag($0) } }
-                            .pickerStyle(.segmented).frame(width: 300)
+                            .pickerStyle(.segmented).frame(width: 380)
                         Spacer()
                         if tab == .timeline {
                             Picker("Actor", selection: $actorFilter) {
@@ -112,6 +133,7 @@ struct SessionDetailView: View {
                     .padding(.horizontal, 16).padding(.vertical, 8)
                     Divider()
                     switch tab {
+                    case .summary: SummaryView(detail: d)
                     case .changes: ChangesView(detail: d)
                     case .timeline: TimelineView(detail: d, actorFilter: actorFilter, showNoise: showNoise)
                     case .evidence: EvidenceView(detail: d)
@@ -280,13 +302,16 @@ struct TimelineView: View {
 struct ChangesView: View {
     let detail: AppModel.SessionDetail
 
-    var changes: [StoredEvent] { detail.events.filter { EventFormatter.isChange($0.event) } }
+    var changes: [StoredEvent] {
+        let ids = Set(detail.report.changes.map(\.id) + detail.report.statusMessages.map(\.id))
+        return detail.events.filter { ids.contains($0.id) }
+    }
 
     var body: some View {
         List {
             Section("What changed") {
                 if changes.isEmpty {
-                    Text("No submits, field changes, mutating requests, alerts or downloads were observed.").foregroundStyle(.secondary)
+                    Text("No changes observed. Based on: \(detail.report.changeBasis).").foregroundStyle(.secondary)
                 }
                 ForEach(changes) { e in
                     VStack(alignment: .leading, spacing: 4) {

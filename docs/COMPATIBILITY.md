@@ -25,7 +25,7 @@ There is one row per tested combination. "Detected via" says which evidence star
 
 ## Codex observations (2026-11-07, mock CMS)
 
-- **Tool path:** all Chrome work goes through one MCP tool, `mcp__cua_repl__js`, with input `{code, title}`. A closing call carries `{completion_summary}` and is correctly classified as non-browser.
+- **Tool path:** all Chrome work goes through one MCP tool, `mcp__cua_repl__js`, with input `{code, title}`. A closing call carries only `{completion_summary}` and is classified as non-browser.
 - **Claiming a tab:** the code claims existing tabs with `cua.getTab({url}, {browser: "chrome"})`. The recorder binds an open tab when its URL appears in the call, or when its debugger attaches within 5 s of a Codex browser call. Here the debugger rule fired first.
 - **Hook events:** PreToolUse and PostToolUse both fired in the app run; in the CLI run only PreToolUse fired for the failed calls. `UserPromptSubmit` gives the task label; the app may rewrite URLs in the prompt as Markdown links.
 - **SessionEnd:** Codex runs SessionEnd synchronously even when marked async, and shows an error line for it. The installer no longer marks Codex's SessionEnd/Interrupt hooks async. Re-trusting those two entries in Codex is needed after a reinstall.
@@ -45,7 +45,7 @@ Claude drove Codex through the ChatGPT app with computer use and drove Claude in
 | Installed extension copy out of date at app launch | ✅ The app restored it and the extension reloaded itself once |
 
 **Observations**
-- **Codex hooks cover only some Codex actions.** Codex reports its `mcp__cua_repl__js` calls. Its typing and clicks (including Save) go through another input path that fires no hook, and these events are trusted input (`isTrusted=true`). The recorder still labels them **Likely Codex**, because the tab's debugger stays attached and the tab is bound to the session.
+- **Codex's hooks report the call, not each action in it.** Every `mcp__cua_repl__js` call fires a hook, including the calls whose code clicks, types and fills. The clicks and typing reach the page as trusted input (`isTrusted=true`), and the hook payload has no tab ID, so the recorder labels those effects **Likely Codex** from the bound tab and the attached debugger. After a session the recorder compares its hook events with Codex's own session log and says how many browser calls matched.
 - **Codex names tab IDs in its code** (`cua.getTab("1511630265")`). The recorder now binds those tabs as runtime-reported.
 - **Codex calls that fail may never post.** A new call from the same Codex session now ends any earlier open call.
 - **Script-set values fire no `change` event.** Codex's Playwright `fill` and Claude's `form_input` both set values from script. Neither fires a native `change`. Before the fix, the ledger missed the change or recorded the old value wrong.
@@ -63,7 +63,7 @@ Claude drove Codex through the ChatGPT app with computer use and drove Claude in
 
 ## Known limits
 
-- **Codex attribution:** Codex's hook payloads have no tab ID field. The code sometimes names one, and the recorder uses it to bind the tab. Most Codex effects come through its unhooked input path, so they stay "Likely Codex" (session-level), not "Identified". Without hooks, the recorder falls back to passive signals: helper connected, debugger attached, tab group named with an emoji.
+- **Codex attribution:** Codex's hook payloads have no tab ID field. The code sometimes names one, and the recorder uses it to bind the tab. Codex's hooks don't say which tab each action touched, so most of its effects stay "Likely Codex" (session-level), not "Identified". Without hooks, the recorder falls back to passive signals: helper connected, debugger attached, tab group named with an emoji.
 - **Passive detection with two helpers connected:** both helpers stay connected, so a debugger attachment that Claude's hooks didn't report is attributed to the other agent only when Claude hooks are known to be active. Otherwise it is "Unknown agent".
 - **DevTools false start:** checked live. DevTools attached a debugger while both helpers were connected, and the detector recorded "not started" after 60 s without corroboration. Gap notices from such tentative sessions now stay in memory.
 - **Task labels:** labels come from `UserPromptSubmit`, which also fires for messages sent mid-turn, so a session that starts mid-conversation can be labeled with a short reply. Labels can be edited in the Ledger window.

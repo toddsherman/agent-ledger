@@ -5,6 +5,17 @@ Sparkle update notes.
 
 ## Unreleased
 
+- The app installs itself in /Applications and is restarted if it stops.
+- A Summary for each session: where the agent went, what it read, the scripts it ran, what changed (or "No changes observed"), and how far the record can be trusted. Exports include it.
+- Background requests such as telemetry pings are no longer listed as changes, and activity the page did by itself is labeled "Page", not "Unknown actor".
+- A notification when a session ends, with a one-line result. Sessions can be marked reviewed.
+- The recorder tells you when it has been interfered with: hooks removed, the extension disconnected while Chrome runs, the app stopped unexpectedly, or the ledger file changed by another program.
+- A daily self-test of the path from hook to ledger, and a notice when an agent updates to a version that hasn't been seen before.
+- After each session the recorder compares its record with the agent's own log and says how many browser calls the hooks reported. It reads tool calls only, never the agent's messages.
+- Alerts (notifications only; nothing is ever blocked): a change on a site you've marked sensitive, a script that could change one, the recorder stopping during a session, and an agent reaching the browser a new way. List sensitive sites in Settings → Alerts.
+- Each export comes with a proof file. `ledgerctl verify-proof <file>` checks that the session's events are as recorded and that none was removed between them.
+- `ledgerctl head` prints the ledger's last hash, to keep somewhere outside the Mac.
+- Reads of the ledger through `ledgerctl` are recorded, and events sent by a program that isn't part of Agent Ledger are marked.
 - Field changes made by script are now recorded. When an agent fills a field from script (Playwright `fill`, Claude's `form_input`) or picks an option without focusing the field, the page fires no change event. The ledger used to miss the change or lose the old value.
 - Codex tabs are bound sooner: from the tab ID Codex names in its code, and from the tab URL right after the app restarts.
 - A new Codex conversation can take over a tab that an earlier, now idle Codex session was using.

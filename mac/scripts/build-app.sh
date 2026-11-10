@@ -33,6 +33,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN/AgentLedger" "$APP/Contents/MacOS/AgentLedger"
 cp "$BIN/ledger-host" "$BIN/ledger-hook" "$BIN/ledgerctl" "$APP/Contents/Helpers/"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+# The keep-alive agent (registered with SMAppService) starts the app at login and restarts it.
+mkdir -p "$APP/Contents/Library/LaunchAgents"
+cp "$ROOT/Resources/LaunchAgents/"*.plist "$APP/Contents/Library/LaunchAgents/"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # The app installs this copy to ~/Library/Application Support/AgentLedger/extension.
 rsync -a --exclude test --exclude ".DS_Store" "$ROOT/../extension/" "$APP/Contents/Resources/extension/"

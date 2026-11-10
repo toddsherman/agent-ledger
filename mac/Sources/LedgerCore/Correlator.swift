@@ -139,6 +139,8 @@ public final class Correlator {
     public var settings: LedgerSettings
     /// Sends a command to the extension (via the host connection that owns the tab, if known).
     public var sendCommand: (_ command: JSONValue, _ peer: Int?) -> Void = { _, _ in }
+    /// Called (on the correlator's queue) when a recorded session ends.
+    public var onSessionEnded: (_ session: SessionRecord, _ reason: String) -> Void = { _, _ in }
 
     private var memory: [MemEvent] = []
     private var tabs: [Int: TabState] = [:]
@@ -1067,6 +1069,7 @@ public final class Correlator {
         persistApp(EventKind.context, "session.ended", p: ["reason": .string(reason)], link: [l], at: t)
         live[l.record.id] = nil
         recentlyEnded[l.record.id] = l
+        onSessionEnded(l.record, reason)
         if let key = l.runtimeKey, var rt = runtimes[key], rt.ledgerSession == l.record.id {
             rt.ledgerSession = nil
             runtimes[key] = rt
@@ -1100,6 +1103,27 @@ public final class Correlator {
         appSeq += 1
         let e = LedgerEvent(src: "app", inst: appInst, seq: appSeq, t: t, kind: kind, cat: cat, tab: tab, p: p)
         persist(e, receivedAt: nowMs(), link: link)
+    }
+
+    /// Records a recorder-health event (stopped, hooks removed, ledger changed, self-test…) and
+    /// links it to every live session, so the session's record shows the hole. Returns the
+    /// sessions it was linked to.
+    @discardableResult
+    public func recordHealth(kind: String, cat: String, p: JSONValue, at t: Double, degrade: Bool = false) -> [String] {
+        let linked = live.values.filter { $0.record.state != "possible" }
+        persistApp(kind, cat, p: p, link: linked, at: t)
+        if degrade { for l in linked where l.record.coverage != "degraded" { l.record.coverage = "degraded"; save(l) } }
+        return linked.map { $0.record.id }
+    }
+
+    /// Stores an event about one session (reconciliation result, backfilled call, alert) and links it.
+    @discardableResult
+    public static func recordSessionEvent(store: LedgerStore, session: String, src: String = "app", kind: String,
+                                          cat: String, p: JSONValue, at t: Double, tab: Int? = nil, url: String? = nil) -> Int64? {
+        let e = LedgerEvent(src: src, inst: "app-notes", t: t, kind: kind, cat: cat, tab: tab, url: url, p: p)
+        guard let id = try? store.append([e]).first else { return nil }
+        try? store.link(session: session, eventIds: [id])
+        return id
     }
 
     /// Detector decisions persist without URLs so false starts can be measured.

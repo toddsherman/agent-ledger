@@ -31,6 +31,17 @@ public enum HookTranslator {
         return false
     }
 
+    /// The same decision `translate` makes for a hook, for a tool call read from an agent's log:
+    /// does this call reach a browser?
+    public static func isBrowserCall(agent: HookAgent, toolName: String, input: JSONValue?) -> Bool {
+        if BrowserRoute.isClosingCall(agent: agent, toolName: toolName, input: input) { return false }
+        if let route = BrowserRoute.byName(agent: agent, toolName: toolName) {
+            return route != BrowserRoute.computerUse || BrowserRoute.computerUseTargetsChrome(input) == true
+        }
+        if let cmd = BrowserRoute.shellCommand(toolName: toolName, input: input) { return !ShellAnalyzer.analyze(cmd).isEmpty }
+        return isBrowserTool(agent: agent, toolName: toolName, input: input)
+    }
+
     /// Tab IDs named in tool input, including inside `browser_batch` actions.
     public static func tabIds(in input: JSONValue?) -> [Int] {
         var out: [Int] = []
@@ -120,13 +131,15 @@ public enum HookTranslator {
         if cat.hasPrefix("tool.") {
             let toolName = o["tool_name"]?.stringValue ?? "?"
             let toolInput = o["tool_input"]
-            var route = BrowserRoute.byName(agent: agent, toolName: toolName)
+            var route = BrowserRoute.isClosingCall(agent: agent, toolName: toolName, input: toolInput)
+                ? nil : BrowserRoute.byName(agent: agent, toolName: toolName)
             var shell: (command: String, finding: ShellFinding)?
             let shellCommand = route == nil ? BrowserRoute.shellCommand(toolName: toolName, input: toolInput) : nil
             if let cmd = shellCommand {
                 let f = ShellAnalyzer.analyze(cmd)
                 if !f.isEmpty { route = BrowserRoute.shell; shell = (cmd, f) }
-            } else if route == nil, isBrowserTool(agent: agent, toolName: toolName, input: toolInput) {
+            } else if route == nil, !BrowserRoute.isClosingCall(agent: agent, toolName: toolName, input: toolInput),
+                      isBrowserTool(agent: agent, toolName: toolName, input: toolInput) {
                 route = BrowserRoute.extensionRoute
             }
             var chromeTarget: Bool?

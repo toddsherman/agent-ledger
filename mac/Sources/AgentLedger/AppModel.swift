@@ -11,6 +11,20 @@ final class AppModel: ObservableObject {
     @Published var hooksInstalled: [HookAgent: Bool] = [:]
     @Published var hostRegisteredPath: String?
     @Published var dataVersion = 0
+    /// One-line result, change count and reviewed mark per session, for the list and the menu.
+    @Published var digests: [String: Digest] = [:]
+
+    struct Digest: Equatable {
+        var oneLine: String
+        var changes: Int
+        var riskyScripts: Int
+        var reviewed: Bool
+    }
+
+    /// Ended sessions that nobody has marked reviewed.
+    var unreviewed: [SessionSummary] {
+        summaries.filter { $0.session.state == "ended" && digests[$0.id]?.reviewed == false }
+    }
     /// Set by agentledger://ledger?session=<id>&tab=changes|timeline|evidence links.
     @Published var deepLink: DeepLink?
 
@@ -29,15 +43,27 @@ final class AppModel: ObservableObject {
 
     let store: LedgerStore
     let correlator: Correlator
-    private let server = IngestServer()
+    let server = IngestServer()
     private let sensors = MacSensors()
-    private let queue = DispatchQueue(label: "agentledger.correlator")
+    let queue = DispatchQueue(label: "agentledger.correlator")
     private var timers: [DispatchSourceTimer] = []
-    private var lastSummaryKey = ""
+    var lastSummaryKey = ""
+    let reportQueue = DispatchQueue(label: "agentledger.reports", qos: .utility)
+    /// Standing problems for the menu (hooks removed, extension missing, ledger changed, …).
+    @Published var warnings: [String] = []
+    /// Result of the last self-test, in plain words.
+    @Published var selfTest: String?
+    let health = HealthMonitor()          // correlator queue only
+    var selfTestNonces: Set<String> = []  // correlator queue only
+    var unverifiedPeers: Set<Int> = []  // correlator queue only
+    var alertKeys: [String: String] = [:] // reportQueue only
+    private var digestKeys: [String: String] = [:]   // reportQueue only
+    private var digestCache: [String: Digest] = [:]  // reportQueue only
+    let notifier = Notifier()
 
     static func makeStore() -> LedgerStore {
         LedgerPaths.ensureDirectories()
-        do { return try LedgerStore(url: LedgerPaths.databaseURL) }
+        do { return try LedgerStore(url: LedgerPaths.databaseURL, anchorURL: LedgerPaths.anchorURL) }
         catch { fatalError("Agent Ledger could not open its database: \(error)") }
     }
 
@@ -47,6 +73,11 @@ final class AppModel: ObservableObject {
         settings = s
         correlator = Correlator(store: store, settings: s)
         installHelperBinaries()
+        let previous = Self.previousRun()
+        KeepAlive.clearUserQuit()
+        if let err = KeepRunning.apply(enabled: s.keepRunning) { message = err }
+        correlator.onSessionEnded = { [weak self] s, _ in self?.sessionEnded(s) }
+        notifier.start()
         let server = self.server
         correlator.sendCommand = { cmd, peer in
             var line = cmd.canonicalData()
@@ -69,6 +100,7 @@ final class AppModel: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             self.correlator.restoreLiveSessions(now: nowMs())
+            self.startupChecks(previous)
             self.drainSpool()
             self.purgeIfNeeded()
             self.publish()
@@ -80,6 +112,10 @@ final class AppModel: ObservableObject {
         }
         every(30.0) { [weak self] in self?.drainSpool() }
         every(6 * 3600) { [weak self] in self?.purgeIfNeeded() }
+        every(60) { [weak self] in self?.healthTick() }
+        every(20) { [weak self] in self?.checkLiveAlerts() }
+        every(24 * 3600) { [weak self] in self?.dailyChecks() }
+        queue.asyncAfter(deadline: .now() + 25) { [weak self] in self?.runSelfTest() }
         registerHostIfNeeded()
         upgradeHooksIfNeeded()
         refreshIntegrations()
@@ -130,7 +166,36 @@ final class AppModel: ObservableObject {
                 queue.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.correlator.rearmAll() }
             }
         case "events":
-            correlator.ingest(msg.events ?? [], peer: peer.id, receivedAt: nowMs())
+            var events = msg.events ?? []
+            // Self-test pings prove the hook program reaches the app; they aren't stored.
+            for e in events where e.cat == "selftest.ping" {
+                if let n = e.p?["nonce"]?.stringValue { selfTestNonces.insert(n) }
+            }
+            events.removeAll { $0.cat == "selftest.ping" }
+            // Events should come from the recorder's own helpers. Anything else is kept, but marked.
+            // A sender that has already exited can't be checked (a hook lives a few milliseconds), so it isn't marked.
+            if !events.isEmpty, let senderPath = peer.path, !SenderCheck.isKnown(path: senderPath) {
+                for i in events.indices {
+                    var o = events[i].p?.objectValue ?? [:]
+                    o["unverifiedSender"] = .string(senderPath)
+                    events[i].p = .object(o)
+                }
+                if unverifiedPeers.insert(peer.id).inserted {
+                    let name = senderPath
+                    _ = correlator.recordHealth(kind: EventKind.sensorHealth, cat: "health.unverified_sender",
+                                                p: ["path": .string(name), "pid": .number(Double(peer.pid))], at: nowMs())
+                    health.setWarning("sender", "Events arrived from \(name), which isn't part of Agent Ledger. They're marked in the record.")
+                }
+            }
+            if !events.isEmpty { correlator.ingest(events, peer: peer.id, receivedAt: nowMs()) }
+        case "read":
+            // ledgerctl tells the app what was read, so reads of the ledger are on the record too.
+            if let j = JSONValue.parse(line) {
+                let e = LedgerEvent(src: "app", inst: "app-notes", t: nowMs(), kind: EventKind.context, cat: "ledger.read",
+                                    p: ["command": j["command"] ?? .null, "session": j["session"] ?? .null,
+                                        "callers": j["callers"] ?? .null, "program": .string(peer.path ?? "unknown")])
+                _ = try? store.append([e])
+            }
         case "snapshot":
             // From ledgerctl (same user only): draw the Ledger window into a PNG.
             if let path = JSONValue.parse(line)?["path"]?.stringValue {
@@ -188,7 +253,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func publish() {
+    func publish() {
         let st = correlator.status(now: nowMs())
         writeStatusFile(st)
         var summaries: [SessionSummary]?
@@ -204,6 +269,70 @@ final class AppModel: ObservableObject {
                 self.summaries = summaries
                 self.dataVersion += 1
             }
+        }
+        if let summaries { refreshDigests(summaries) }
+    }
+
+    /// Builds the read-time report for sessions that changed. Off the correlator's queue: a long
+    /// session takes a few hundred milliseconds.
+    private func refreshDigests(_ summaries: [SessionSummary]) {
+        reportQueue.async {
+            var changed = false
+            for s in summaries {
+                let corrections = (try? self.store.corrections(session: s.id)) ?? []
+                let key = "\(s.eventCount)-\(s.session.state)-\(corrections.count)"
+                if self.digestKeys[s.id] == key { continue }
+                guard let r = try? SessionReport.build(store: self.store, session: s.id) else { continue }
+                self.digestKeys[s.id] = key
+                self.digestCache[s.id] = Digest(oneLine: r.oneLine, changes: r.changes.count,
+                                                riskyScripts: r.scripts.filter(\.couldChange).count,
+                                                reviewed: Self.isReviewed(corrections))
+                changed = true
+            }
+            guard changed else { return }
+            let out = self.digestCache
+            DispatchQueue.main.async { self.digests = out }
+        }
+    }
+
+    static func isReviewed(_ corrections: [Correction]) -> Bool {
+        corrections.last { $0.action == "reviewed" || $0.action == "unreviewed" }?.action == "reviewed"
+    }
+
+    func setReviewed(session: String, reviewed: Bool, note: String?) {
+        queue.async {
+            let n = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = try? self.store.addCorrection(session: session, eventId: nil, fromT: nil, toT: nil,
+                                              action: reviewed ? "reviewed" : "unreviewed", note: (n?.isEmpty ?? true) ? nil : n)
+            self.lastSummaryKey = ""
+            self.publish()
+        }
+    }
+
+    func markAllReviewed() {
+        let ids = unreviewed.map(\.id)
+        queue.async {
+            for id in ids {
+                _ = try? self.store.addCorrection(session: id, eventId: nil, fromT: nil, toT: nil, action: "reviewed", note: "marked with all others")
+            }
+            self.lastSummaryKey = ""
+            self.publish()
+        }
+    }
+
+    /// After a session ends: wait for late effects to settle, then post its one-line result.
+    private func sessionEnded(_ s: SessionRecord) {
+        let settings = correlator.settings
+        reportQueue.asyncAfter(deadline: .now() + 4) {
+            // Compare with the agent's own log first, so the report and alerts include any call the hooks missed.
+            self.reconcile(session: s.id, notify: true)
+            self.raiseAlerts(session: s.id, settings: settings)
+            guard settings.sessionEndNotices else { return }
+            guard let r = try? SessionReport.build(store: self.store, session: s.id) else { return }
+            // Sessions that never reached a page aren't worth a notice.
+            guard r.pagesRead > 0 || !r.scripts.isEmpty || !r.changes.isEmpty || r.reportedActions > 0 else { return }
+            self.notifier.post(title: r.changes.isEmpty ? "Agent session ended" : "Agent session ended: \(r.changes.count) change\(r.changes.count == 1 ? "" : "s")",
+                               body: r.oneLine, session: s.id, id: "ended-\(s.id)")
         }
     }
 
@@ -266,7 +395,14 @@ final class AppModel: ObservableObject {
         queue.async { self.correlator.pauseChanged(now: nowMs()) }
     }
 
+    /// Quit from the menu: the keep-alive agent leaves the app closed until the next restart.
+    func quitByUser() {
+        KeepAlive.markUserQuit(now: nowMs())
+        NSApp.terminate(nil)
+    }
+
     func apply(_ s: LedgerSettings) {
+        if s.keepRunning != settings.keepRunning, let err = KeepRunning.apply(enabled: s.keepRunning) { message = err }
         settings = s
         s.save()
         queue.async { self.correlator.settings = s; self.publish() }
@@ -300,6 +436,7 @@ final class AppModel: ObservableObject {
 
     struct SessionDetail {
         var session: SessionRecord
+        var report: SessionReport
         var events: [StoredEvent]
         var attributions: [Int64: Attribution]
         var corrections: [Correction]
@@ -307,12 +444,15 @@ final class AppModel: ObservableObject {
     }
 
     func loadDetail(_ id: String, completion: @escaping (SessionDetail?) -> Void) {
-        queue.async {
+        reportQueue.async {
             guard let s = try? self.store.session(id: id) else { DispatchQueue.main.async { completion(nil) }; return }
-            let d = SessionDetail(session: s, events: (try? self.store.events(forSession: id)) ?? [],
-                                  attributions: (try? self.store.latestAttributions(session: id)) ?? [:],
-                                  corrections: (try? self.store.corrections(session: id)) ?? [],
-                                  tabs: (try? self.store.sessionTabs(session: id)) ?? [])
+            let events = (try? self.store.events(forSession: id)) ?? []
+            let tabs = (try? self.store.sessionTabs(session: id)) ?? []
+            let report = SessionReport.build(session: s, events: events,
+                                             attributions: (try? self.store.latestAttributions(session: id)) ?? [:],
+                                             tabs: tabs.map { (tab: $0.tab, boundAt: $0.boundAt, unboundAt: $0.unboundAt) })
+            let d = SessionDetail(session: s, report: report, events: events, attributions: report.effective,
+                                  corrections: (try? self.store.corrections(session: id)) ?? [], tabs: tabs)
             DispatchQueue.main.async { completion(d) }
         }
     }
@@ -394,12 +534,14 @@ final class AppModel: ObservableObject {
             let r = try HookInstaller.install(agent: agent, hookBinary: Self.hookBinary)
             message = r.message + (r.backup.map { ". Backup: \(($0 as NSString).lastPathComponent)" } ?? "") +
                 (agent == .codex ? ". Codex may ask you to trust the new hooks." : ". New Claude Code sessions will use them.")
+            setHooksExpected(agent, true)
         } catch { message = "Hook install failed: \(error.localizedDescription)" }
         refreshIntegrations()
     }
 
     func uninstallHooks(_ agent: HookAgent) {
-        do { message = try HookInstaller.uninstall(agent: agent).message } catch { message = "Hook removal failed: \(error.localizedDescription)" }
+        do { message = try HookInstaller.uninstall(agent: agent).message; setHooksExpected(agent, false) }
+        catch { message = "Hook removal failed: \(error.localizedDescription)" }
         refreshIntegrations()
     }
 

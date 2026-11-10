@@ -8,6 +8,7 @@ import LedgerCore
 // quickly if the app isn't reachable (falling back to the spool directory).
 //
 // Usage: ledger-hook --agent claude|codex
+//        ledger-hook --selftest <nonce>
 
 signal(SIGPIPE, SIG_IGN)
 
@@ -15,6 +16,19 @@ var agent = HookAgent.claude
 let args = CommandLine.arguments
 if let i = args.firstIndex(of: "--agent"), i + 1 < args.count, let a = HookAgent(rawValue: args[i + 1]) {
     agent = a
+}
+
+// Self-test, run by the app (never by an agent's hook): prove this program can reach the app.
+// Nothing is spooled, and the exit code says whether it got through.
+if let i = args.firstIndex(of: "--selftest"), i + 1 < args.count {
+    let ping = LedgerEvent(src: "hook.selftest", t: nowMs(), kind: EventKind.sensorHealth, cat: "selftest.ping",
+                           p: ["nonce": .string(args[i + 1])])
+    let c = SocketClient()
+    let ok = c.connect(timeoutMs: 1000) &&
+        c.send(WireMessage(type: "hello", role: "hook", pid: Int(getpid()), agent: "selftest").line() +
+               WireMessage(type: "events", events: [ping]).line())
+    c.close()
+    exit(ok ? 0 : 1)
 }
 
 // Read stdin with a size cap; hook payloads with tool results can be large.

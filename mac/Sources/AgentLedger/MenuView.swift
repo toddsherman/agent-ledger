@@ -81,7 +81,9 @@ struct MenuView: View {
             Button {
                 openWindow(id: "ledger")
                 NSApp.activate(ignoringOtherApps: true)
-            } label: { Label("Open Ledger…", systemImage: "list.bullet.rectangle") }
+            } label: {
+                Label(model.unreviewed.isEmpty ? "Open Ledger…" : "Open Ledger… (\(model.unreviewed.count) to review)", systemImage: "list.bullet.rectangle")
+            }
             Button { model.thisWasMe(minutes: 2) } label: { Label("That was me (last 2 minutes)", systemImage: "person.fill.checkmark") }
                 .disabled(model.status.sessions.isEmpty)
             if model.status.paused {
@@ -96,7 +98,7 @@ struct MenuView: View {
             HStack {
                 SettingsLink { Label("Settings…", systemImage: "gearshape") }
                 Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
+                Button("Quit") { model.quitByUser() }
             }
         }
         .buttonStyle(.borderless)
@@ -116,6 +118,14 @@ struct MenuView: View {
                       detail: model.hooksInstalled[.claude] == true ? lastHook("claude-code") : "not installed")
             healthRow("Codex hooks", ok: model.hooksInstalled[.codex] == true,
                       detail: model.hooksInstalled[.codex] == true ? lastHook("codex") : "not installed")
+            ForEach(model.warnings, id: \.self) { w in
+                Label(w, systemImage: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let t = model.selfTest {
+                Text(t).font(.caption2).foregroundStyle(t.contains("failed") ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             let helpers = model.status.helpers
             Text("Agent browser helpers: Claude \(helpers["claude-code"] ?? 0), Codex \(helpers["codex"] ?? 0)")
                 .font(.caption2).foregroundStyle(.secondary)

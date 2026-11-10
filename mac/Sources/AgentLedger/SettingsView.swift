@@ -6,10 +6,12 @@ struct SettingsView: View {
     @EnvironmentObject var updater: UpdaterModel
     @State private var draft = LedgerSettings()
     @State private var excluded = ""
+    @State private var sensitive = ""
 
     var body: some View {
         TabView {
             capture.tabItem { Label("Capture", systemImage: "record.circle") }
+            alerts.tabItem { Label("Alerts", systemImage: "bell.badge") }
             integrations.tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
             data.tabItem { Label("Data", systemImage: "externaldrive") }
         }
@@ -17,6 +19,7 @@ struct SettingsView: View {
         .onAppear {
             draft = model.settings
             excluded = model.settings.excludedHosts.joined(separator: ", ")
+            sensitive = model.settings.sensitiveHosts.joined(separator: ", ")
             model.refreshIntegrations()
         }
     }
@@ -24,6 +27,7 @@ struct SettingsView: View {
     private func save() {
         var s = draft
         s.excludedHosts = excluded.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        s.sensitiveHosts = sensitive.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
         s.pausedUntil = model.settings.pausedUntil
         model.apply(s)
     }
@@ -41,6 +45,34 @@ struct SettingsView: View {
                 .font(.caption).foregroundStyle(.secondary)
             TextField("Never record these sites", text: $excluded, prompt: Text("bank.example.com, mail.google.com"))
             HStack { Spacer(); Button("Save") { save() }.keyboardShortcut(.defaultAction) }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var alerts: some View {
+        Form {
+            Section("Notifications") {
+                Toggle("Tell me when an agent session ends", isOn: $draft.sessionEndNotices)
+                Toggle("Tell me about alerts and recorder problems", isOn: $draft.alertNotices)
+                Text("Alerts only notify. Agent Ledger never blocks or pauses an agent. Alerts are kept in the session's record even when notifications are off.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Sensitive sites") {
+                TextField("Sites", text: $sensitive, prompt: Text("github.com, mail.google.com, mybank.com"))
+                Text("Any change an agent makes on these sites raises an alert, as does a script that could change something. Subdomains are included. Elsewhere, alerts cover sends, deletes, payments and similar actions, a new way of reaching Chrome, and a browser the recorder can't see.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Self-test") {
+                HStack {
+                    Button("Run self-test") { model.runSelfTest(manual: true) }
+                    Text(model.selfTest ?? "Checks the hook program, the extension and the ledger. Runs at launch and daily.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(model.warnings, id: \.self) { w in
+                    Label(w, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                }
+            }
+            HStack { Spacer(); Button("Save") { save() } }
         }
         .formStyle(.grouped)
     }
@@ -96,6 +128,11 @@ struct SettingsView: View {
                 } else {
                     Text("Updates are available in signed release builds.").font(.caption).foregroundStyle(.secondary)
                 }
+            }
+            Section("Always on") {
+                Toggle("Start at login and restart if the app stops", isOn: $draft.keepRunning)
+                Text("Status: \(KeepRunning.statusText). Quit in the menu keeps the app closed until the next restart.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Stepper("Keep recorded sessions for \(draft.retentionDays) days", value: $draft.retentionDays, in: 1...3650)
             HStack { Spacer(); Button("Save") { save() } }

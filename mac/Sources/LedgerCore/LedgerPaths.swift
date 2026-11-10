@@ -19,7 +19,15 @@ public enum LedgerPaths {
     public static var socketPath: String { supportDir.appendingPathComponent("ingest.sock").path }
     public static var spoolDir: URL { supportDir.appendingPathComponent("spool", isDirectory: true) }
     public static var databaseURL: URL { supportDir.appendingPathComponent("ledger.sqlite") }
+    /// The last event's ID and hash, kept beside the database to notice changes made outside the app.
+    public static var anchorURL: URL { supportDir.appendingPathComponent("anchor.json") }
+    public static var statusURL: URL { supportDir.appendingPathComponent("status.json") }
     public static var settingsURL: URL { supportDir.appendingPathComponent("settings.json") }
+    /// Written when you choose Quit, so the keep-alive agent leaves the app closed until the next restart.
+    public static var quitMarkerURL: URL { supportDir.appendingPathComponent("quit-by-user") }
+    public static var keepAliveStateURL: URL { supportDir.appendingPathComponent("keepalive.json") }
+    public static let appBundleID = "sh.todd.agent-ledger"
+    public static let keepAlivePlistName = "sh.todd.agent-ledger.keepalive.plist"
     public static var exportsDir: URL { supportDir.appendingPathComponent("exports", isDirectory: true) }
 
     @discardableResult
