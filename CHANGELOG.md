@@ -3,7 +3,7 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
-## Unreleased
+## 0.2.0
 
 - The app installs itself in /Applications and is restarted if it stops.
 - A Summary for each session: where the agent went, what it read, the scripts it ran, what changed (or "No changes observed"), and how far the record can be trusted. Exports include it.
