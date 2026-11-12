@@ -18,8 +18,17 @@ public struct LedgerSettings: Codable, Equatable, Sendable {
     public var sessionEndNotices = true
     /// Post notifications for alerts (recorder stopped, unseen browser, changes on sensitive sites).
     public var alertNotices = true
-    /// Sites where any real change raises an alert.
+    /// Also notify about sessions where the agent only used the browser inside its own app
+    /// (the Claude desktop app's browser pane, the ChatGPT app's browser). Off: they are recorded quietly.
+    public var inAppBrowserNotices = false
+    /// Your own sites where any real change raises an alert, on top of the built-in groups.
     public var sensitiveHosts: [String] = []
+    /// Built-in site groups switched away from their default (group id → on).
+    public var siteGroups: [String: Bool] = [:]
+    /// Sites left out of the built-in groups.
+    public var sensitiveExceptions: [String] = []
+    /// Action alerts switched off (or back on), by `Alerts.ActionKind` id. Missing means on.
+    public var actionAlerts: [String: Bool] = [:]
 
     public init() {}
 
@@ -36,6 +45,10 @@ public struct LedgerSettings: Codable, Equatable, Sendable {
         sessionEndNotices = try c.decodeIfPresent(Bool.self, forKey: .sessionEndNotices) ?? sessionEndNotices
         alertNotices = try c.decodeIfPresent(Bool.self, forKey: .alertNotices) ?? alertNotices
         sensitiveHosts = try c.decodeIfPresent([String].self, forKey: .sensitiveHosts) ?? sensitiveHosts
+        inAppBrowserNotices = try c.decodeIfPresent(Bool.self, forKey: .inAppBrowserNotices) ?? inAppBrowserNotices
+        siteGroups = try c.decodeIfPresent([String: Bool].self, forKey: .siteGroups) ?? siteGroups
+        sensitiveExceptions = try c.decodeIfPresent([String].self, forKey: .sensitiveExceptions) ?? sensitiveExceptions
+        actionAlerts = try c.decodeIfPresent([String: Bool].self, forKey: .actionAlerts) ?? actionAlerts
     }
 
     public static func matches(host: String?, in list: [String]) -> Bool {
@@ -46,7 +59,19 @@ public struct LedgerSettings: Codable, Equatable, Sendable {
         }
     }
 
-    public func isSensitive(host: String?) -> Bool { Self.matches(host: host, in: sensitiveHosts) }
+    public func isSensitive(host: String?) -> Bool { sensitiveGroup(host: host) != nil }
+
+    public func groupEnabled(_ id: String) -> Bool { siteGroups[id] ?? SiteGroups.group(id)?.defaultOn ?? false }
+
+    public func actionEnabled(_ id: String) -> Bool { actionAlerts[id] ?? true }
+
+    /// The name of the list that makes this host sensitive: your own list, or a built-in group that is on.
+    public func sensitiveGroup(host: String?) -> String? {
+        if Self.matches(host: host, in: sensitiveHosts) { return SiteGroups.customName }
+        if Self.matches(host: host, in: sensitiveExceptions) { return nil }
+        guard let m = SiteGroups.match(host: host), groupEnabled(m.group.id) else { return nil }
+        return m.group.name
+    }
 
     public static func load(from url: URL = LedgerPaths.settingsURL) -> LedgerSettings {
         guard let data = try? Data(contentsOf: url),

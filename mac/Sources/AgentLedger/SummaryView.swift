@@ -19,11 +19,11 @@ struct SummaryView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 reviewBar
                 if !r.alerts.isEmpty { section("Alerts", "bell.badge") { alertRows } }
-                section("Changed", "pencil.and.list.clipboard") { changed }
-                section("Where", "globe") { whereRows }
-                section("Read", "doc.text.magnifyingglass") { read }
-                section("Ran", "curlybraces") { ran }
-                section("Trust", "checkmark.shield") { trust }
+                section("What it changed", "pencil.and.list.clipboard") { changed }
+                section("Where it worked", "globe") { whereRows }
+                section("What it read", "doc.text.magnifyingglass") { read }
+                section("Scripts it ran", "curlybraces") { ran }
+                section("How complete this record is", "checkmark.shield") { trust }
             }
             .padding(18)
             .frame(maxWidth: 860, alignment: .leading)
@@ -48,7 +48,7 @@ struct SummaryView: View {
                 Button("Mark reviewed") { model.setReviewed(session: detail.session.id, reviewed: true, note: note); note = "" }
                     .keyboardShortcut("r", modifiers: .command)
             } else {
-                Text("Still \(detail.session.state). You can mark it reviewed when it ends.").foregroundStyle(.secondary)
+                Text("This session is still going. You can mark it reviewed when it ends.").foregroundStyle(.secondary)
             }
         }
         .font(.callout)
@@ -63,7 +63,7 @@ struct SummaryView: View {
                     Text(a.text).fontWeight(.medium).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
                 ForEach(Array(a.details.enumerated()), id: \.offset) { _, d in
-                    Text(d).font(.caption).foregroundStyle(.secondary).padding(.leading, 70).textSelection(.enabled)
+                    Text(d).font(.caption).foregroundStyle(.secondary).padding(.leading, Fmt.detailIndent).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -72,18 +72,18 @@ struct SummaryView: View {
 
     @ViewBuilder private var changed: some View {
         if r.changes.isEmpty {
-            Text(r.unseenBrowser == nil ? "No changes observed." : "No changes reported.")
+            Text(r.unseenBrowser == nil ? "No changes seen." : "No changes reported.")
         }
         ForEach(r.changes) { c in
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(Fmt.clock(c.t)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    if let tag = c.tag { Chip(text: tag, color: .red) }
+                    if let tag = c.tag { Chip(text: tag, color: tag == "Change" ? .secondary : .red) }
                     Chip(text: c.actor + (c.reported ? " (reported)" : ""), color: c.actor.contains("You") ? .blue : .purple)
                     Text(c.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
                 ForEach(Array(c.details.enumerated()), id: \.offset) { _, d in
-                    Text(d).font(.caption).foregroundStyle(.secondary).padding(.leading, 70).textSelection(.enabled)
+                    Text(d).font(.caption).foregroundStyle(.secondary).padding(.leading, Fmt.detailIndent).textSelection(.enabled)
                 }
             }
         }
@@ -98,7 +98,7 @@ struct SummaryView: View {
     }
 
     @ViewBuilder private var whereRows: some View {
-        if r.sites.isEmpty { Text("No pages recorded.").foregroundStyle(.secondary) }
+        if r.sites.isEmpty { Text("No pages were recorded.").foregroundStyle(.secondary) }
         ForEach(Array(r.workedSites.enumerated()), id: \.offset) { _, site in
             HStack {
                 Text(site.host).fontWeight(.medium)
@@ -118,7 +118,7 @@ struct SummaryView: View {
     }
 
     @ViewBuilder private var read: some View {
-        if r.opened.isEmpty && r.fetched.isEmpty && r.readTools.isEmpty { Text("Nothing recorded.").foregroundStyle(.secondary) }
+        if r.opened.isEmpty && r.fetched.isEmpty && r.readTools.isEmpty { Text("Nothing was read.").foregroundStyle(.secondary) }
         groups("Opened", r.opened)
         groups("Fetched", r.fetched)
         if !r.readTools.isEmpty {
@@ -141,7 +141,7 @@ struct SummaryView: View {
     }
 
     @ViewBuilder private var ran: some View {
-        if r.scripts.isEmpty { Text("No scripts.").foregroundStyle(.secondary) }
+        if r.scripts.isEmpty { Text("No scripts were run.").foregroundStyle(.secondary) }
         else {
             let risky = r.scripts.filter(\.couldChange)
             Text("\(r.scripts.count) script\(r.scripts.count == 1 ? "" : "s"): \(r.scripts.count - risky.count) look read-only, \(risky.count) could have changed something.")
@@ -190,6 +190,7 @@ struct ScriptRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Button { open.toggle() } label: { Image(systemName: open ? "chevron.down" : "chevron.right") }.buttonStyle(.borderless)
+                    .help(open ? "Hide the script" : "Show the script").accessibilityLabel(open ? "Hide the script" : "Show the script")
                 Text(Fmt.clock(script.t)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 Chip(text: script.couldChange ? "could change" : "looks read-only", color: script.couldChange ? .orange : .green)
                 if script.failed { Chip(text: "failed", color: .red) }

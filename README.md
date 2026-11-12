@@ -12,13 +12,13 @@ The design rationale is in [PLAN.md](PLAN.md) and the original brief is [browser
 
 1. **Download the Mac app.** Get the latest `Agent-Ledger-<version>.dmg` from [Releases](https://github.com/toddsherman/agent-ledger/releases/latest), open it, and drag Agent Ledger to Applications.
    - It's signed with Developer ID and notarized.
-   - It updates itself with Sparkle: Settings → Data → Updates, or **Check for Updates…** in the menu bar panel.
+   - It updates itself with Sparkle: Settings → General → Updates.
    - On launch it registers its Chrome native host. It also installs its helpers to `~/Library/Application Support/AgentLedger/bin/` and a copy of the extension to `…/AgentLedger/extension/`.
 2. **Install the Chrome extension** from the Chrome Web Store (unlisted link coming once it's approved). Until then, load it unpacked:
    1. Open `chrome://extensions` and turn on **Developer mode**. Leave it on.
    2. Click **Load unpacked**.
    3. In the file picker press Cmd+Shift+G, paste `~/Library/Application Support/AgentLedger/extension`, and choose it.
-3. **Turn on agent hooks** (optional, recommended). Use Settings → Integrations, or the command line:
+3. **Turn on agent hooks** (optional, recommended). Use Settings → Setup, or the command line:
    ```bash
    ~/Library/Application\ Support/AgentLedger/bin/ledgerctl install-hooks claude
    ~/Library/Application\ Support/AgentLedger/bin/ledgerctl install-hooks codex

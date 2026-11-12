@@ -1,4 +1,6 @@
 import AppKit
+import UserNotifications
+import SwiftUI
 import Combine
 import LedgerCore
 
@@ -7,7 +9,33 @@ final class AppModel: ObservableObject {
     @Published var status = LiveStatus()
     @Published var summaries: [SessionSummary] = []
     @Published var settings: LedgerSettings
-    @Published var message: String?
+    /// The result of the last action. Shown in the menu, Settings and the Ledger window, then cleared.
+    @Published var message: String? {
+        didSet {
+            guard message != nil else { return }
+            messageToken += 1
+            let token = messageToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                if self?.messageToken == token { self?.message = nil }
+            }
+        }
+    }
+    private var messageToken = 0
+    @Published var chromeRunning = true
+    /// Notifications for Agent Ledger are switched off in System Settings.
+    @Published var notificationsOff = false
+    /// Set to open Settings at a tab (from a link or a "Set up" button). The Ledger window acts on it.
+    @Published var settingsRequest: String?
+    private let dockIcon = DockIconController()
+    let launchedAt = Date()
+
+    /// Chrome is open but the extension isn't talking to the app (after a short grace at launch).
+    var extensionMissing: Bool {
+        chromeRunning && !status.extensionConnected && Date().timeIntervalSince(launchedAt) > 20
+    }
+
+    /// Something stops the record from being complete, and you can fix it.
+    var needsAttention: Bool { !warnings.isEmpty || extensionMissing }
     @Published var hooksInstalled: [HookAgent: Bool] = [:]
     @Published var hostRegisteredPath: String?
     @Published var dataVersion = 0
@@ -39,6 +67,13 @@ final class AppModel: ObservableObject {
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         deepLink = DeepLink(session: items.first { $0.name == "session" }?.value,
                             tab: items.first { $0.name == "tab" }?.value)
+        // agentledger://ledger?settings=integrations opens Settings at that tab.
+        if let tab = items.first(where: { $0.name == "settings" })?.value { openSettings(tab: tab) }
+    }
+
+    func openSettings(tab: String) {
+        UserDefaults.standard.set(tab, forKey: "settingsTab")
+        settingsRequest = tab
     }
 
     let store: LedgerStore
@@ -64,7 +99,17 @@ final class AppModel: ObservableObject {
     static func makeStore() -> LedgerStore {
         LedgerPaths.ensureDirectories()
         do { return try LedgerStore(url: LedgerPaths.databaseURL, anchorURL: LedgerPaths.anchorURL) }
-        catch { fatalError("Agent Ledger could not open its database: \(error)") }
+        catch {
+            // Don't let the keep-alive agent restart the app into the same failure.
+            KeepAlive.markUserQuit(now: nowMs())
+            let alert = NSAlert()
+            alert.messageText = "Agent Ledger can't open its record"
+            alert.informativeText = "The file may be damaged or locked by another program.\n\n\(error)\n\nAgent Ledger will quit. Nothing is being recorded."
+            alert.addButton(withTitle: "Show in Finder")
+            alert.addButton(withTitle: "Quit")
+            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.activateFileViewerSelecting([LedgerPaths.databaseURL]) }
+            exit(1)
+        }
     }
 
     init() {
@@ -75,6 +120,7 @@ final class AppModel: ObservableObject {
         installHelperBinaries()
         let previous = Self.previousRun()
         KeepAlive.clearUserQuit()
+        dockIcon.start()
         if let err = KeepRunning.apply(enabled: s.keepRunning) { message = err }
         correlator.onSessionEnded = { [weak self] s, _ in self?.sessionEnded(s) }
         notifier.start()
@@ -200,10 +246,11 @@ final class AppModel: ObservableObject {
             }
         case "snapshot":
             // From ledgerctl (same user only): draw the Ledger window into a PNG.
-            if let path = JSONValue.parse(line)?["path"]?.stringValue {
+            if let msg = JSONValue.parse(line), let path = msg["path"]?.stringValue {
                 let server = self.server
+                let which = msg["window"]?.stringValue ?? "ledger"
                 DispatchQueue.main.async {
-                    let result = Self.snapshotLedgerWindow(to: URL(fileURLWithPath: path))
+                    let result = self.snapshot(window: which, to: URL(fileURLWithPath: path))
                     var reply = (["type": "snapshot.result", "ok": .bool(result == nil),
                                   "error": result.map { .string($0) } ?? .null] as JSONValue).canonicalData()
                     reply.append(0x0A)
@@ -333,7 +380,9 @@ final class AppModel: ObservableObject {
             guard let r = try? SessionReport.build(store: self.store, session: s.id) else { return }
             // Sessions that never reached a page aren't worth a notice.
             guard r.pagesRead > 0 || !r.scripts.isEmpty || !r.changes.isEmpty || r.reportedActions > 0 else { return }
-            self.notifier.post(title: r.changes.isEmpty ? "Agent session ended" : "Agent session ended: \(r.changes.count) change\(r.changes.count == 1 ? "" : "s")",
+            // The agent stayed in its own app's browser and never touched Chrome.
+            if r.inAppBrowserOnly && !settings.inAppBrowserNotices { return }
+            self.notifier.post(title: "\(Correlator.displayAgent(s.agent)) finished in \(r.inAppBrowserOnly ? "its own browser" : "Chrome")" + (r.changes.isEmpty ? "" : ": \(r.changes.count) change\(r.changes.count == 1 ? "" : "s")"),
                                body: r.oneLine, session: s.id, id: "ended-\(s.id)")
         }
     }
@@ -341,13 +390,31 @@ final class AppModel: ObservableObject {
     /// Renders the visible Ledger window (an app may always draw its own windows; no Screen
     /// Recording permission involved). Used for store screenshots.
     /// Returns nil on success, otherwise the reason it failed.
-    static func snapshotLedgerWindow(to url: URL) -> String? {
-        let candidates = NSApp.windows.filter { $0.isVisible && $0.frame.width >= 600 && !($0 is NSPanel) }
-        guard let window = candidates.first(where: { $0.title == "Agent Ledger" }) ?? candidates.max(by: { $0.frame.width < $1.frame.width }) else {
-            return "no visible Ledger window (windows: \(NSApp.windows.map { "\($0.title)|\(Int($0.frame.width))|\($0.isVisible)" }))"
+    func snapshot(window which: String, to url: URL) -> String? {
+        if which == "menu" {
+            // The menu panel only exists while it is open, so draw a copy of its view.
+            let host = NSHostingView(rootView: MenuView().environmentObject(self).environmentObject(UpdaterModel.shared))
+            let size = host.fittingSize
+            host.frame = NSRect(origin: .zero, size: size)
+            host.appearance = NSApp.effectiveAppearance
+            host.wantsLayer = true
+            host.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            w.contentView = host
+            host.layoutSubtreeIfNeeded()
+            return Self.write(view: host, to: url)
+        }
+        let candidates = NSApp.windows.filter(DockIconController.isAppWindow)
+        let window = which == "settings" ? candidates.first(where: { $0.title != "Agent Ledger" })
+            : candidates.first(where: { $0.title == "Agent Ledger" })
+        guard let window else {
+            return "no visible \(which) window (windows: \(NSApp.windows.map { "\($0.title)|\(Int($0.frame.width))|\($0.isVisible)" }))"
         }
         guard let content = window.contentView else { return "window has no content view" }
-        let view = content.superview ?? content
+        return Self.write(view: content.superview ?? content, to: url)
+    }
+
+    private static func write(view: NSView, to url: URL) -> String? {
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return "could not allocate bitmap" }
         view.cacheDisplay(in: view.bounds, to: rep)
         guard let png = rep.representation(using: .png, properties: [:]) else { return "PNG encoding failed" }
@@ -428,7 +495,7 @@ final class AppModel: ObservableObject {
         queue.async {
             let text: String
             if let v = try? self.store.verifyChain() {
-                text = v.ok ? "Hash chain intact over \(v.checked) events." : "Hash chain broken at event \(v.firstBadEventId ?? -1)."
+                text = v.ok ? "No tampering found in \(v.checked) events." : "The record was altered at event \(v.firstBadEventId ?? -1)."
             } else { text = "Integrity check failed to run." }
             DispatchQueue.main.async { self.message = text }
         }
@@ -525,6 +592,12 @@ final class AppModel: ObservableObject {
 
     func refreshIntegrations() {
         hooksInstalled = [.claude: HookInstaller.isInstalled(agent: .claude), .codex: HookInstaller.isInstalled(agent: .codex)]
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            UNUserNotificationCenter.current().getNotificationSettings { st in
+                let off = st.authorizationStatus == .denied
+                DispatchQueue.main.async { if self.notificationsOff != off { self.notificationsOff = off } }
+            }
+        }
         DispatchQueue.global().async {
             let path = NativeHostInstaller.installedPath()
             DispatchQueue.main.async { self.hostRegisteredPath = path }

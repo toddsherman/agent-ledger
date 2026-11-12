@@ -83,6 +83,7 @@ extension AppModel {
                                           chromeRunning: chrome,
                                           extensionConnected: correlator.status(now: now).extensionConnected)
         for n in health.evaluate(inputs) { report(n, at: now) }
+        DispatchQueue.main.async { if self.chromeRunning != chrome { self.chromeRunning = chrome } }
 
         let live = store.liveCheck()
         if let n = HealthMonitor.notice(live: live) {

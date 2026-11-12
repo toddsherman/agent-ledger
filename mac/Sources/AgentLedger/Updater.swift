@@ -5,6 +5,7 @@ import Sparkle
 /// (SUFeedURL, SUPublicEDKey). Updates are only offered when the app runs from a bundle
 /// that carries a real key, so development builds never try to update themselves.
 final class UpdaterModel: ObservableObject {
+    static let shared = UpdaterModel()
     private let controller: SPUStandardUpdaterController?
     @Published var canCheckForUpdates = false
     private var observation: NSKeyValueObservation?

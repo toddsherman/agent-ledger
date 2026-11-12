@@ -107,12 +107,12 @@ case "reconcile":
     for c in r.missing.prefix(20) { print("  missing from hooks: \(c.tool) \(c.id)") }
     if r.hookOnly > 0 { print("  \(r.hookOnly) hook-reported calls aren't in the log") }
 case "snapshot":
-    guard args.count > 1 else { fail("usage: ledgerctl snapshot <out.png>  (the Ledger window must be open)") }
+    guard args.count > 1 else { fail("usage: ledgerctl snapshot <out.png> [ledger|settings|menu]  (the window must be open)") }
     let out = URL(fileURLWithPath: args[1]).standardizedFileURL
     try? FileManager.default.removeItem(at: out)
     let client = SocketClient()
     guard client.connect() else { fail("Agent Ledger isn't running") }
-    let req: JSONValue = ["type": "snapshot", "path": .string(out.path)]
+    let req: JSONValue = ["type": "snapshot", "path": .string(out.path), "window": .string(args.count > 2 ? args[2] : "ledger")]
     var line = WireMessage(type: "hello", role: "ctl", pid: Int(getpid())).line()
     line.append(req.canonicalData()); line.append(0x0A)
     _ = client.send(line)

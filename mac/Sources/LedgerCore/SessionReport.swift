@@ -78,6 +78,10 @@ public struct SessionReport: Sendable {
     /// The recorder had no view of the browser the agent used (for example the Claude desktop
     /// app's built-in browser). Everything in the report then comes from the agent's reports.
     public var unseenBrowser: String?
+    /// The agent stayed inside its own app's browser (the Claude desktop app's browser pane, or the
+    /// ChatGPT app's) and never touched your Chrome. Recorded as usual, but not worth a notification.
+    /// For Codex this is inferred: it used its browser tool and Chrome saw nothing.
+    public var inAppBrowserOnly = false
 
     public var opened: [Group]
     public var fetched: [Group]
@@ -352,7 +356,12 @@ public enum EventClass {
         return .housekeeping
     }
 
+    public static let securityTag = "Security change"
+    public static let consentTag = "Access granted"
+
     static let consequential: [(String, String)] = [
+        (#"\b((change|reset|update|set|create|new) (your |a |new )?(password|passcode|pin)|two[- ]factor|2[- ]step|two[- ]step|2fa|passkey|security key|recovery (email|phone|code|key)|backup codes?|(add|new|generate|create|regenerate) (an? |new )?(ssh key|api key|access token|personal access token|token|app password|secret))\b"#, securityTag),
+        (#"^\s*(allow|authori[sz]e|grant access|approve access|yes, allow)\b(?!\s+(all\b|cookies|selection|selected|essential|necessary|notifications))"#, consentTag),
         (#"\b(delete|remove|discard|erase|trash)\b"#, "Delete"),
         (#"\b(send|reply|forward)\b"#, "Send"),
         (#"\b(post|publish|tweet|comment)\b"#, "Post"),
@@ -361,6 +370,24 @@ public enum EventClass {
         (#"\b(invite|share|grant|add (member|collaborator|user))\b"#, "Share"),
         (#"\b(save|update|apply|confirm|submit|change|enable|disable|turn (on|off)|merge|approve|cancel (order|subscription|plan))\b"#, "Change"),
     ]
+
+    /// What submitting a form amounts to: card fields mean a payment and a new-password field a security
+    /// change, whatever the button says. Otherwise the button's name decides.
+    static func formTag(fields: [JSONValue], submitter: String?) -> String {
+        let named = consequentialTag(submitter)
+        if named == securityTag || named == consentTag { return named! }
+        var card = false, newPassword = false
+        for f in fields {
+            let d = f["field"]
+            let ac = (d?["autocomplete"]?.stringValue ?? "").lowercased()
+            let sens = d?["sensitive"]?.stringValue ?? f["value"]?["reason"]?.stringValue ?? ""
+            if ac.contains("cc-number") || ac.contains("cc-csc") || sens.hasPrefix("autocomplete:cc-") { card = true }
+            if ac.contains("new-password") { newPassword = true }
+        }
+        if newPassword { return securityTag }
+        if card { return "Pay" }
+        return named ?? "Change"
+    }
 
     /// The consequential action a control's name suggests, from a fixed list.
     public static func consequentialTag(_ name: String?) -> String? {
@@ -422,14 +449,14 @@ public extension SessionReport {
         var reportedActions = 0
         var reportedChanges: [Change] = []
         var actionTimes: [(t: Double, tab: Int?)] = []
-        var unseenTools = 0, extensionTools = 0
+        var unseenTools = 0, extensionTools = 0, inAppTools = 0, automationTools = 0
         var unseenName: String?
         for c in calls {
             let p = c.pre.event.p
             let toolName = p?["tool"]?.stringValue ?? ""
             let route = p?["route"]?.stringValue ?? ""
-            if toolName.hasPrefix("mcp__Claude_Browser__") { unseenTools += 1; unseenName = "the Claude desktop app's built-in browser" }
-            else if route == BrowserRoute.automation { unseenTools += 1; unseenName = unseenName ?? "a browser driven by an automation tool" }
+            if toolName.hasPrefix("mcp__Claude_Browser__") { unseenTools += 1; inAppTools += 1; unseenName = "the Claude desktop app's built-in browser" }
+            else if route == BrowserRoute.automation { unseenTools += 1; automationTools += 1; unseenName = unseenName ?? "a browser driven by an automation tool" }
             else if route == BrowserRoute.extensionRoute { extensionTools += 1 }
             for op in EventClass.ops(p) {
                 switch EventClass.kind(op) {
@@ -593,7 +620,8 @@ public extension SessionReport {
                 }
                 let submitter = e.p?["submitter"]?["name"]?.stringValue
                 changes.append(Change(id: se.id, t: e.t, kind: "submit", text: EventFormatter.describe(e), actor: actorText(se),
-                                      details: fields, tag: EventClass.consequentialTag(submitter) ?? "Change", reported: false))
+                                      details: fields, tag: EventClass.formTag(fields: e.p?["fields"]?.arrayValue ?? [], submitter: submitter),
+                                      reported: false))
             case "field.change", "edit.change":
                 observedTyping += 1
                 actionTimes.append((e.t, e.tab))
@@ -708,7 +736,11 @@ public extension SessionReport {
         let unseen = (unseenTools > 0 && extensionTools == 0 && observedTabs == 0) ? unseenName : nil
         if unseen != nil { for i in sites.indices { sites[i].reportedOnly = true } }
 
-        return SessionReport(
+        let sawChrome = observedTabs > 0 || events.contains { $0.event.src.hasPrefix("ext.") }
+        let inAppOnly = !sawChrome && automationTools == 0
+            && (s.agent == "codex" ? (extensionTools > 0 || inAppTools > 0) : (inAppTools > 0 && extensionTools == 0))
+
+        var built = SessionReport(
             agent: s.agent, startedAt: s.startedAt, activeMs: max(0, lastT - firstT), sites: sites, prompts: promptCount,
             tabs: observedTabs, unseenBrowser: unseen,
             opened: EventClass.grouped(openedURLs), fetched: EventClass.grouped(fetchedURLs), fetchedCount: fetchedURLs.count,
@@ -724,5 +756,7 @@ public extension SessionReport {
                 Change(id: $0.id, t: $0.event.t, kind: "alert", text: $0.event.p?["title"]?.stringValue ?? "Alert", actor: "",
                        details: [$0.event.p?["body"]?.stringValue ?? ""], tag: nil, reported: false)
             })
+        built.inAppBrowserOnly = inAppOnly
+        return built
     }
 }

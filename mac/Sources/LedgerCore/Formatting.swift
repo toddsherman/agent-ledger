@@ -252,3 +252,37 @@ public enum EventFormatter {
         }
     }
 }
+
+/// One set of plain words for a session's status, used by the menu, the list and the session header.
+public enum Words {
+    /// How sure the record is about which agent ran the session.
+    public static func attribution(_ label: String) -> (text: String, help: String) {
+        switch label {
+        case "identified": return ("Confirmed", "Confirmed: the agent itself reported working in these tabs.")
+        case "likely": return ("Probable", "Probable: the agent didn't report this session. It was recognised from what happened in Chrome.")
+        case "mixed": return ("Agent and you", "Agent and you: the agent's activity overlapped with your own clicks or typing.")
+        default: return ("Unclear", "Unclear: nothing identified who was acting.")
+        }
+    }
+
+    public static func state(_ state: String) -> (text: String, help: String) {
+        switch state {
+        case "recording": return ("Recording", "The agent is using Chrome and its tabs are being recorded.")
+        case "inactive": return ("Idle", "The agent hasn't used Chrome for a while. The session ends if it stays idle.")
+        case "possible": return ("Checking", "Something looks like an agent. Recording starts if it is confirmed.")
+        case "ended": return ("Ended", "The session is over.")
+        default: return (state.capitalized, "")
+        }
+    }
+
+    public static let incompleteRecord = "Incomplete record"
+    public static let incompleteRecordHelp = "Part of this session couldn't be recorded. Open the session's Changes tab and look under Coverage."
+
+    /// Where a timeline row came from.
+    public static func source(src: String, pre: Bool) -> (text: String, help: String) {
+        if src.hasPrefix("hook.") || src.hasPrefix("log.") { return ("reported", "The agent's own report of what it did.") }
+        if src == "app" { return ("recorder", "Written by Agent Ledger itself.") }
+        if src == "mac.sensor" { return ("Mac", "Seen on this Mac, outside Chrome.") }
+        return pre ? ("earlier", "Seen in Chrome shortly before recording started.") : ("observed", "Seen in Chrome by the extension, independently of the agent.")
+    }
+}

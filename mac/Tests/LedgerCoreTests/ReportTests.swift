@@ -168,6 +168,129 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: settings, knownRoutes: nil), [])
     }
 
+    func testInAppBrowserSessionsDontNotify() {
+        // The Claude desktop app's browser pane: hooks report the calls, Chrome sees nothing.
+        add("tool.pre", at: 1000, src: "hook.claude", kind: EventKind.attemptedOp, tab: nil,
+            p: ["tool": "mcp__Claude_Browser__navigate", "toolUseId": "n", "input": ["url": "http://localhost:3000"],
+                "route": "automation", "browser": true])
+        add("tool.pre", at: 2000, src: "hook.claude", kind: EventKind.attemptedOp, tab: nil,
+            p: ["tool": "mcp__Claude_Browser__file_upload", "toolUseId": "u", "input": ["paths": ["/tmp/a.png"]],
+                "route": "automation", "browser": true])
+        let s = SessionRecord(id: "S", agent: "claude-code", runtimeSession: "rt-1", state: "ended", startedAt: t0,
+                              lastActivityAt: t0 + 5000, endedAt: t0 + 5000, taskLabel: nil, labelSource: nil,
+                              startReason: "", attribution: "identified", coverage: "ok", detectorVersion: "t")
+        let r = SessionReport.build(session: s, events: events, attributions: atts, tabs: [])
+        XCTAssertTrue(r.inAppBrowserOnly)
+        let quiet = Alerts.evaluate(report: r, events: events, settings: LedgerSettings(), knownRoutes: [])
+        XCTAssertFalse(quiet.isEmpty, "the alerts stay in the record")
+        XCTAssertTrue(quiet.allSatisfy { !$0.notify })
+        var loud = LedgerSettings()
+        loud.inAppBrowserNotices = true
+        XCTAssertTrue(Alerts.evaluate(report: r, events: events, settings: loud, knownRoutes: []).contains { $0.notify })
+        // A session that reached Chrome is not quiet.
+        deleteOnCMS()
+        XCTAssertFalse(report().inAppBrowserOnly)
+        XCTAssertTrue(Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil).contains { $0.notify })
+    }
+
+    func testStatusWords() {
+        XCTAssertEqual(Words.attribution("identified").text, "Confirmed")
+        XCTAssertEqual(Words.attribution("likely").text, "Probable")
+        XCTAssertEqual(Words.attribution("whatever").text, "Unclear")
+        XCTAssertEqual(Words.state("inactive").text, "Idle")
+        XCTAssertEqual(Words.source(src: "hook.claude", pre: false).text, "reported")
+        XCTAssertEqual(Words.source(src: "ext.sw", pre: true).text, "earlier")
+        XCTAssertFalse(Words.attribution("mixed").help.isEmpty)
+    }
+
+    func testBuiltInSiteGroups() {
+        var s = LedgerSettings()
+        XCTAssertEqual(s.sensitiveGroup(host: "secure.chase.com"), "Financial")
+        XCTAssertEqual(s.sensitiveGroup(host: "mail.google.com"), "Email")
+        XCTAssertNil(s.sensitiveGroup(host: "www.google.com"), "only the listed Google hosts count")
+        XCTAssertEqual(s.sensitiveGroup(host: "console.aws.amazon.com"), "Developer and infrastructure", "the longest entry wins")
+        XCTAssertEqual(s.sensitiveGroup(host: "www.amazon.com"), "Shopping and travel")
+        XCTAssertEqual(s.sensitiveGroup(host: "www.irs.gov"), "Government, tax and health")
+        XCTAssertNil(s.sensitiveGroup(host: "notgov"))
+        XCTAssertNil(s.sensitiveGroup(host: "app.slack.com"), "work chat is off until switched on")
+        XCTAssertNil(s.sensitiveGroup(host: "example.com"))
+        s.siteGroups["chat"] = true
+        s.siteGroups["financial"] = false
+        XCTAssertEqual(s.sensitiveGroup(host: "app.slack.com"), "Work chat and messaging")
+        XCTAssertNil(s.sensitiveGroup(host: "chase.com"))
+        s.sensitiveExceptions = ["reddit.com"]
+        XCTAssertNil(s.sensitiveGroup(host: "old.reddit.com"))
+        s.sensitiveHosts = ["chase.com", "reddit.com"]
+        XCTAssertEqual(s.sensitiveGroup(host: "chase.com"), SiteGroups.customName, "your own list beats a switched-off group")
+        XCTAssertEqual(s.sensitiveGroup(host: "reddit.com"), SiteGroups.customName, "and beats an exception")
+        // An older settings file without the new keys still loads with the defaults.
+        let old = try! JSONDecoder().decode(LedgerSettings.self, from: Data(#"{"sensitiveHosts":["a.com"]}"#.utf8))
+        XCTAssertTrue(old.groupEnabled("financial") && !old.groupEnabled("storage") && old.actionEnabled("delete"))
+        // No entry is listed twice, and all are lowercase bare hosts.
+        let all = SiteGroups.all.flatMap(\.hosts)
+        XCTAssertEqual(all.count, Set(all).count)
+        XCTAssertTrue(all.allSatisfy { $0 == $0.lowercased() && !$0.contains("/") && !$0.hasPrefix("www.") && !$0.hasPrefix(".") })
+    }
+
+    func testAlertNamesTheGroupOnABuiltInSite() {
+        add("nav.committed", at: 500, url: "https://github.com/me/repo/settings", p: ["transition": "link"])
+        tool("computer", at: 1000, id: "a", input: ["action": "left_click", "tabId": 5], end: 3000)
+        add("ui.click", at: 1200, src: "ext.content", url: "https://github.com/me/repo/settings", actor: "agent:claude-code",
+            p: ["target": ["name": "Delete this repository", "role": "button"]])
+        add("net.request", at: 1400, url: "https://github.com/me/repo/settings/delete", actor: "agent:claude-code",
+            p: ["method": "POST", "type": "main_frame", "mutating": true, "status": 302])
+        let alerts = Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil)
+        XCTAssertEqual(alerts.map(\.key), ["sensitive:github.com"])
+        XCTAssertTrue(alerts[0].body.hasPrefix("Developer and infrastructure: "))
+        var off = LedgerSettings()
+        off.siteGroups["developer"] = false
+        XCTAssertTrue(Alerts.evaluate(report: report(), events: events, settings: off, knownRoutes: nil)[0].key.hasPrefix("action:"))
+    }
+
+    func testActionAlertsCanBeSwitchedOff() {
+        deleteOnCMS()
+        var s = LedgerSettings()
+        s.actionAlerts["delete"] = false
+        XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: s, knownRoutes: nil), [])
+    }
+
+    func testSecurityConsentAndCardTags() {
+        XCTAssertEqual(EventClass.consequentialTag("Change password"), EventClass.securityTag)
+        XCTAssertEqual(EventClass.consequentialTag("Enable two-factor authentication"), EventClass.securityTag)
+        XCTAssertEqual(EventClass.consequentialTag("Generate new token"), EventClass.securityTag)
+        XCTAssertEqual(EventClass.consequentialTag("Add SSH key"), EventClass.securityTag)
+        XCTAssertEqual(EventClass.consequentialTag("Authorize Acme App"), EventClass.consentTag)
+        XCTAssertEqual(EventClass.consequentialTag("Allow"), EventClass.consentTag)
+        XCTAssertNil(EventClass.consequentialTag("Allow all cookies"))
+        XCTAssertEqual(EventClass.consequentialTag("Approve"), "Change")
+        let card: JSONValue = ["field": ["name": "Card number", "autocomplete": "cc-number", "sensitive": "autocomplete:cc-number"],
+                               "value": ["redacted": true]]
+        let pw: JSONValue = ["field": ["name": "New password", "type": "password", "autocomplete": "new-password", "sensitive": "password-field"],
+                             "value": ["redacted": true]]
+        let login: JSONValue = ["field": ["name": "Password", "type": "password", "autocomplete": "current-password"], "value": ["redacted": true]]
+        XCTAssertEqual(EventClass.formTag(fields: [card], submitter: "Continue"), "Pay")
+        XCTAssertEqual(EventClass.formTag(fields: [pw], submitter: "Save"), EventClass.securityTag)
+        XCTAssertEqual(EventClass.formTag(fields: [login], submitter: "Sign in"), "Change")
+        XCTAssertEqual(EventClass.formTag(fields: [], submitter: "Send"), "Send")
+    }
+
+    func testAlertForConsentAndUpload() {
+        add("nav.committed", at: 500, url: "https://auth.example.com/oauth/authorize", p: ["transition": "link"])
+        tool("computer", at: 1000, id: "a", input: ["action": "left_click", "tabId": 5], end: 3000)
+        add("ui.click", at: 1200, src: "ext.content", url: "https://auth.example.com/oauth/authorize", actor: "agent:claude-code",
+            p: ["target": ["name": "Authorize", "role": "button"]])
+        add("net.request", at: 1400, url: "https://auth.example.com/oauth/authorize", actor: "agent:claude-code",
+            p: ["method": "POST", "type": "main_frame", "mutating": true, "status": 302])
+        tool("file_upload", at: 5000, id: "u", input: ["paths": ["/tmp/a.pdf"], "tabId": 5], end: 5500)
+        var s = LedgerSettings()
+        let alerts = Alerts.evaluate(report: report(), events: events, settings: s, knownRoutes: nil)
+        XCTAssertEqual(alerts.count, 2)
+        XCTAssertTrue(alerts[0].title.contains("Access granted on auth.example.com"))
+        XCTAssertTrue(alerts[1].key.hasPrefix("upload:"))
+        s.actionAlerts = ["consent": false, "upload": false]
+        XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: s, knownRoutes: nil), [])
+    }
+
     func testAlertForNewRouteAndGaps() {
         tool("navigate", at: 1000, id: "n", input: ["url": "https://example.com", "tabId": 5], end: 1500)
         XCTAssertEqual(Alerts.routes(in: events), ["extension:mcp__claude-in-chrome"])

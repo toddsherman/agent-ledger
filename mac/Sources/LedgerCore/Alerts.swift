@@ -12,6 +12,29 @@ public enum Alerts {
         public var notify = true
     }
 
+    /// Consequential actions that raise an alert on any site. Each has a switch in Settings.
+    public struct ActionKind: Sendable, Identifiable {
+        public var id: String
+        public var name: String
+        public var detail: String
+        /// The change tag this kind covers, if it comes from one.
+        public var tag: String?
+    }
+
+    public static let actionKinds: [ActionKind] = [
+        ActionKind(id: "pay", name: "Payments and orders", detail: "Pay, buy, place order, subscribe, or a form with card fields", tag: "Pay"),
+        ActionKind(id: "transfer", name: "Money transfers", detail: "Transfer, withdraw, deposit", tag: "Transfer"),
+        ActionKind(id: "security", name: "Security settings", detail: "Passwords, two-factor, recovery details, new keys and tokens", tag: EventClass.securityTag),
+        ActionKind(id: "consent", name: "Access approvals", detail: "Allow or Authorize on a sign-in or permission screen", tag: EventClass.consentTag),
+        ActionKind(id: "send", name: "Sends", detail: "Send, reply, forward", tag: "Send"),
+        ActionKind(id: "post", name: "Posts", detail: "Post, publish, comment", tag: "Post"),
+        ActionKind(id: "share", name: "Sharing and invites", detail: "Share, invite, add a member", tag: "Share"),
+        ActionKind(id: "delete", name: "Deletes", detail: "Delete, remove, discard", tag: "Delete"),
+        ActionKind(id: "upload", name: "File uploads", detail: "A file from this Mac given to a page", tag: nil),
+    ]
+
+    static func actionKind(tag: String) -> ActionKind? { actionKinds.first { $0.tag == tag } }
+
     static let gapTitles: [String: String] = [
         "gap.recorder_stopped": "The recorder stopped during this session",
         "gap.ledger_changed": "The ledger was changed during this session",
@@ -35,9 +58,11 @@ public enum Alerts {
             perHost[h, default: []].append(c)
         }
         for (h, cs) in perHost.sorted(by: { $0.key < $1.key }) {
-            let first = cs.min { $0.t < $1.t }!
+            // Lead with the most serious change (a tagged action), then the earliest.
+            let first = cs.min { ($0.tag == nil || $0.tag == "Change" ? 1 : 0, $0.t) < ($1.tag == nil || $1.tag == "Change" ? 1 : 0, $1.t) }!
+            let group = settings.sensitiveGroup(host: h) ?? SiteGroups.customName
             out.append(Alert(key: "sensitive:\(h)", title: "\(agent) changed something on \(h)",
-                             body: first.text + (cs.count > 1 ? " (and \(cs.count - 1) more)" : ""), eventId: first.id))
+                             body: "\(group): " + first.text + (cs.count > 1 ? " (and \(cs.count - 1) more)" : ""), eventId: first.id))
         }
         // Scripts that could change a sensitive site count too: the change may not be visible.
         for s in r.scripts where s.couldChange {
@@ -52,8 +77,15 @@ public enum Alerts {
         // 2. A consequential action anywhere (send, delete, pay, …), named by the control.
         for c in r.changes where !c.reported && c.tag != nil && c.tag != "Change" && c.actor != "Likely you" {
             guard c.host.map({ !settings.isSensitive(host: $0) }) ?? true else { continue }
+            guard let kind = actionKind(tag: c.tag!), settings.actionEnabled(kind.id) else { continue }
             out.append(Alert(key: "action:\(c.id)", title: "\(agent): \(c.tag!)\(c.host.map { " on \($0)" } ?? "")",
                              body: c.text, eventId: c.id))
+        }
+
+        if settings.actionEnabled("upload") {
+            for c in r.changes where c.kind == "upload" {
+                out.append(Alert(key: "upload:\(c.id)", title: "\(agent) uploaded a file", body: c.text, eventId: c.id))
+            }
         }
 
         // 3. A route into the browser that hasn't been seen before.
@@ -73,6 +105,13 @@ public enum Alerts {
             guard let title = gapTitles[se.event.cat] else { continue }
             if se.event.cat == "gap.recorder_stopped", se.event.p?["reason"]?.stringValue == "quit" { continue }
             out.append(Alert(key: "gap:\(se.id)", title: title, body: EventFormatter.describe(se.event), eventId: se.id, notify: false))
+        }
+        // An agent working in its own app's browser never touched your Chrome: keep the alerts
+        // in the record, but don't notify unless you asked for that.
+        if !settings.inAppBrowserNotices {
+            for i in out.indices where r.inAppBrowserOnly || out[i].key.hasPrefix("route:automation:mcp__Claude_Browser") {
+                out[i].notify = false
+            }
         }
         return out
     }

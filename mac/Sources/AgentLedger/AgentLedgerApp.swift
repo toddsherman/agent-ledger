@@ -4,7 +4,7 @@ import LedgerCore
 @main
 struct AgentLedgerApp: App {
     @StateObject private var model = AppModel()
-    @StateObject private var updater = UpdaterModel()
+    @StateObject private var updater = UpdaterModel.shared
 
     var body: some Scene {
         MenuBarExtra {
@@ -12,7 +12,8 @@ struct AgentLedgerApp: App {
                 .environmentObject(model)
                 .environmentObject(updater)
         } label: {
-            Image(systemName: menuIcon)
+            Image(nsImage: Logo.image(model.logoState, points: 18))
+                .accessibilityLabel(model.logoStateText)
         }
         .menuBarExtraStyle(.window)
 
@@ -23,18 +24,17 @@ struct AgentLedgerApp: App {
         }
         .defaultSize(width: 1180, height: 760)
         .handlesExternalEvents(matching: ["ledger"])
+        .commands {
+            // Quit from the menu or with Command-Q counts as your choice, so the app isn't restarted.
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit Agent Ledger") { model.quitByUser() }.keyboardShortcut("q")
+            }
+        }
 
         Settings {
             SettingsView()
                 .environmentObject(model)
                 .environmentObject(updater)
         }
-    }
-
-    private var menuIcon: String {
-        if model.status.paused { return "pause.circle" }
-        if model.status.sessions.contains(where: { $0.state == "recording" }) { return "record.circle.fill" }
-        if !model.status.sessions.isEmpty { return "record.circle" }
-        return "circle.dashed"
     }
 }
