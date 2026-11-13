@@ -32,6 +32,7 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 360)
+        .background(TopEdgePin())
         .onReceive(ticker) { now = $0 }
         .onAppear { model.refreshIntegrations() }
     }
@@ -233,6 +234,37 @@ struct MenuView: View {
             Text(title).font(.caption)
             Spacer()
             Text(detail).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Keeps the menu panel the same height as its content, with its top edge under the menu bar.
+/// The panel grows when the content does but never shrinks again, and centres shorter content
+/// in the leftover space, so after anything collapsed the menu looked like it was floating.
+private struct TopEdgePin: NSViewRepresentable {
+    func makeNSView(context: Context) -> PinView { PinView() }
+    func updateNSView(_ view: PinView, context: Context) {}
+
+    /// Sits behind the menu's content, so its height is the content's height.
+    final class PinView: NSView {
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            fit()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            fit()
+        }
+
+        private func fit() {
+            let height = bounds.height
+            guard let window, height > 1 else { return }
+            DispatchQueue.main.async { [weak window] in
+                guard let window, abs(window.frame.height - height) > 0.5 else { return }
+                let f = window.frame
+                window.setFrame(NSRect(x: f.minX, y: f.maxY - height, width: f.width, height: height), display: true)
+            }
         }
     }
 }

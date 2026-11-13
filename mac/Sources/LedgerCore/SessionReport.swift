@@ -466,6 +466,10 @@ public extension SessionReport {
                                           durationMs: c.end.map { $0 - c.pre.event.t }, failed: c.failed, resultPreview: c.preview,
                                           requests: 0, nonGetRequests: 0, fetched: [], signals: EventClass.scriptSignals(in: code)))
                     if !EventClass.scriptSignals(in: code).isEmpty { actionTimes.append((c.pre.event.t, op.tab)) }
+                    // Codex opens a tab in its own app's browser with cua.createBrowserTab("iab", …).
+                    if s.agent == "codex", code.range(of: #"createBrowserTab\(\s*["']iab["']"#, options: .regularExpression) != nil {
+                        unseenTools += 1; inAppTools += 1; unseenName = "the Codex app's built-in browser"
+                    }
                 case .read, .screenshot:
                     readCounts[op.name == "computer" ? "screenshot" : op.name, default: 0] += 1
                 case .navigate:
@@ -733,7 +737,7 @@ public extension SessionReport {
         }
 
         let observedTabs = Set(tabs.map(\.tab)).count
-        let unseen = (unseenTools > 0 && extensionTools == 0 && observedTabs == 0) ? unseenName : nil
+        let unseen = (unseenTools > 0 && (extensionTools == 0 || (s.agent == "codex" && inAppTools > 0)) && observedTabs == 0) ? unseenName : nil
         if unseen != nil { for i in sites.indices { sites[i].reportedOnly = true } }
 
         let sawChrome = observedTabs > 0 || events.contains { $0.event.src.hasPrefix("ext.") }

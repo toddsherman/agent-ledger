@@ -168,6 +168,19 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: settings, knownRoutes: nil), [])
     }
 
+    func testCodexInAppBrowserIsNamed() {
+        add("tool.pre", at: 1000, src: "hook.codex", kind: EventKind.attemptedOp, tab: nil,
+            p: ["tool": "mcp__cua_repl__js", "toolUseId": "c",
+                "input": ["code": "var t = await cua.createBrowserTab(\"iab\", \"https://example.com\", { visible: false });"],
+                "route": "extension", "browser": true])
+        let s = SessionRecord(id: "S", agent: "codex", runtimeSession: "rt-2", state: "ended", startedAt: t0,
+                              lastActivityAt: t0 + 5000, endedAt: t0 + 5000, taskLabel: nil, labelSource: nil,
+                              startReason: "", attribution: "identified", coverage: "ok", detectorVersion: "t")
+        let r = SessionReport.build(session: s, events: events, attributions: atts, tabs: [])
+        XCTAssertTrue(r.inAppBrowserOnly)
+        XCTAssertEqual(r.unseenBrowser, "the Codex app's built-in browser")
+    }
+
     func testInAppBrowserSessionsDontNotify() {
         // The Claude desktop app's browser pane: hooks report the calls, Chrome sees nothing.
         add("tool.pre", at: 1000, src: "hook.claude", kind: EventKind.attemptedOp, tab: nil,

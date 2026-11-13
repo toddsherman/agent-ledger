@@ -222,6 +222,9 @@ extension AppModel {
         guard let r = try? AgentLogs.run(store: store, session: id) else { return }
         queue.async { self.lastSummaryKey = ""; self.publish() }
         if notify, !r.missing.isEmpty, correlator.settings.alertNotices {
+            // The agent stayed in its own app's browser: recorded, but not worth a notification.
+            if !correlator.settings.inAppBrowserNotices,
+               (try? SessionReport.build(store: store, session: id))?.inAppBrowserOnly == true { return }
             notifier.post(title: "Hooks missed \(r.missing.count) browser call\(r.missing.count == 1 ? "" : "s")",
                           body: "The agent's own log lists \(r.logged) browser calls; its hooks reported \(r.matched). The missing ones were added from the log.",
                           session: id, tab: "summary", id: "reconcile-\(id)")

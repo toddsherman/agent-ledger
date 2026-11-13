@@ -3,6 +3,12 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.3.1
+
+- Fixed: the menu bar panel no longer hangs below the menu bar after part of it collapses (for example after "Hide details").
+- Sessions where an agent used only its own app's browser no longer raise the "Hooks missed browser calls" notification.
+- Codex's built-in browser is now recognised by name in the session summary.
+
 ## 0.3.0
 
 - Alerts now work without setup. Ten built-in groups of sites are watched: Financial, Email, Password managers, Accounts and identity, Developer and infrastructure, Shopping and travel, Government, tax and health, Social and publishing, File storage and sharing, and Work chat and messaging. The last two start switched off. Each group has a switch in Settings → Alerts, where you can also see its sites, add your own, and take a site out.
