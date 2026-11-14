@@ -82,6 +82,8 @@ public struct SessionReport: Sendable {
     /// ChatGPT app's) and never touched your Chrome. Recorded as usual, but not worth a notification.
     /// For Codex this is inferred: it used its browser tool and Chrome saw nothing.
     public var inAppBrowserOnly = false
+    /// The agent opened or drove Safari at some point. The recorder only sees Chrome.
+    public var usedSafari = false
 
     public var opened: [Group]
     public var fetched: [Group]
@@ -449,7 +451,7 @@ public extension SessionReport {
         var reportedActions = 0
         var reportedChanges: [Change] = []
         var actionTimes: [(t: Double, tab: Int?)] = []
-        var unseenTools = 0, extensionTools = 0, inAppTools = 0, automationTools = 0
+        var unseenTools = 0, extensionTools = 0, inAppTools = 0, automationTools = 0, safariTools = 0
         var unseenName: String?
         for c in calls {
             let p = c.pre.event.p
@@ -457,7 +459,9 @@ public extension SessionReport {
             let route = p?["route"]?.stringValue ?? ""
             if toolName.hasPrefix("mcp__Claude_Browser__") { unseenTools += 1; inAppTools += 1; unseenName = "the Claude desktop app's built-in browser" }
             else if route == BrowserRoute.automation { unseenTools += 1; automationTools += 1; unseenName = unseenName ?? "a browser driven by an automation tool" }
+            else if route == BrowserRoute.safari { unseenTools += 1; safariTools += 1; unseenName = unseenName ?? "Safari" }
             else if route == BrowserRoute.extensionRoute { extensionTools += 1 }
+            else if p?["routeKinds"]?.arrayValue?.contains("safari") == true { safariTools += 1 }
             for op in EventClass.ops(p) {
                 switch EventClass.kind(op) {
                 case .script:
@@ -741,7 +745,7 @@ public extension SessionReport {
         if unseen != nil { for i in sites.indices { sites[i].reportedOnly = true } }
 
         let sawChrome = observedTabs > 0 || events.contains { $0.event.src.hasPrefix("ext.") }
-        let inAppOnly = !sawChrome && automationTools == 0
+        let inAppOnly = !sawChrome && automationTools == 0 && safariTools == 0
             && (s.agent == "codex" ? (extensionTools > 0 || inAppTools > 0) : (inAppTools > 0 && extensionTools == 0))
 
         var built = SessionReport(
@@ -761,6 +765,7 @@ public extension SessionReport {
                        details: [$0.event.p?["body"]?.stringValue ?? ""], tag: nil, reported: false)
             })
         built.inAppBrowserOnly = inAppOnly
+        built.usedSafari = safariTools > 0
         return built
     }
 }

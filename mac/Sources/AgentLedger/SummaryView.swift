@@ -111,6 +111,10 @@ struct SummaryView: View {
         Text("\(r.prompts) prompt\(r.prompts == 1 ? "" : "s"), \(r.tabs) tab\(r.tabs == 1 ? "" : "s")" +
              (ui.isEmpty ? "" : ". The agent's own pages (\(ui.joined(separator: ", "))) are left out."))
             .font(.caption).foregroundStyle(.secondary)
+        if r.usedSafari, r.unseenBrowser != "Safari" {
+            Label("The agent also used Safari, which the recorder can't see. That part is missing from this record.", systemImage: "eye.slash")
+                .font(.caption).foregroundStyle(.orange)
+        }
         if let b = r.unseenBrowser {
             Label("The agent used \(b), which the recorder can't see. Everything here is the agent's own report.", systemImage: "eye.slash")
                 .font(.caption).foregroundStyle(.orange)

@@ -2,6 +2,12 @@
 
 Agent Ledger keeps a local record of what AI agents (Claude Code, Codex) do in your everyday Chrome. The record comes from the recorder's own observations, not from the agents' summaries. It says who did what, and it says so when it isn't sure.
 
+![The Ledger window: a Claude Code session with the changes it made, in the order they happened](docs/screenshots/changes.webp)
+
+| What you changed is kept apart from what the agent changed | Codex sessions are recorded the same way |
+| --- | --- |
+| ![A session where some edits are marked as yours](docs/screenshots/your-edits.webp) | ![A Codex session in the Ledger window](docs/screenshots/codex.webp) |
+
 - **Chrome extension** (`extension/`): watches tab, group, navigation and debugger-attachment metadata. In tabs an agent is using, it also captures clicks, typing, field before/after values, submits, mutating requests and on-page status messages. No screenshots.
 - **Mac menu bar app** (`mac/`): owns the local SQLite ledger. It correlates browser events with agent hook reports and Mac context (agent helper processes, the frontmost app, the timing of physical clicks and key presses). It shows sessions in a review window and exports JSONL plus a Markdown retrospective.
 - **Logging-only hooks** for Claude Code and Codex: report browser tool calls as "runtime-reported" evidence. They run in the background, always exit 0, and can't block or change anything.
@@ -49,6 +55,7 @@ The design rationale is in [PLAN.md](PLAN.md) and the original brief is [browser
   - computer use aimed at Chrome
   - separate Chrome processes an agent starts, with their debugging port and profile folder
   - remote debugging turned on in your own Chrome
+- **Safari and other browsers:** not recorded. When an agent opens Safari, scripts it, or uses screen control on it, the session says so and an alert is raised, but what happened there is only what the agent reported.
 - **Never captured:**
   - Password, card, one-time-code and hidden fields
   - Clipboard contents

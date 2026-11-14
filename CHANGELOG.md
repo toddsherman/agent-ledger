@@ -3,6 +3,12 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.4.1
+
+- **Safari.** Agent Ledger records Chrome only. When an agent opens Safari, scripts it, or uses screen control on it, the session now says so and raises an alert, every time, so that part isn't silently missing from the record.
+- The "reached the browser a new way" alert names Codex's own browser tool and the Claude in Chrome extension, where it used to say "a browser extension tool".
+- Messages that programs send an agent (task notifications, a subagent's hand-back) are no longer kept as session titles. Titles already stored that way are cleared.
+
 ## 0.4.0
 
 Three new alerts for sites that are dangerous in themselves, not just sensitive.

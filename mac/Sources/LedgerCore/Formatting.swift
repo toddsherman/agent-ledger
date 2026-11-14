@@ -126,6 +126,12 @@ public enum EventFormatter {
         case "download.changed": return "Download \(p?["state"]?.stringValue ?? p?["error"]?.stringValue ?? "updated")"
         case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.shell:
             return "\(agentName(p)) ran a \(routeLabel(p)): \(quote(p?["input"]?["command"]?.stringValue, max: 140))"
+        case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.safari:
+            if let cmd = p?["input"]?["command"]?.stringValue {
+                return "\(agentName(p)) ran a shell command that reaches Safari, which the recorder can't see: \(quote(cmd, max: 140))"
+            }
+            let by = p?["safariBy"]?.stringValue.map { " (\($0))" } ?? ""
+            return "\(agentName(p)) used screen control on Safari, which the recorder can't see: \(p?["input"]?["action"]?.stringValue ?? Correlator.shortTool(p?["tool"]?.stringValue ?? ""))\(by)"
         case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.automation:
             return "\(agentName(p)) used browser automation: \(toolSummary(p))"
         case "tool.pre" where p?["route"]?.stringValue == BrowserRoute.computerUse:
@@ -133,7 +139,8 @@ public enum EventFormatter {
             let by = p?["chromeBy"]?.stringValue.map { " (\($0))" } ?? ""
             return "\(agentName(p)) computer use on Chrome: \(p?["input"]?["action"]?.stringValue ?? Correlator.shortTool(p?["tool"]?.stringValue ?? ""))\(app)\(by)"
         case "tool.pre": return "\(agentName(p)) started \(toolSummary(p))"
-        case "tool.post" where p?["route"]?.stringValue == BrowserRoute.shell:
+        case "tool.post" where p?["route"]?.stringValue == BrowserRoute.shell
+            || (p?["route"]?.stringValue == BrowserRoute.safari && p?["routeKinds"] != nil):
             let err = p?["result"]?["isError"]?.boolValue == true ? " with an error" : ""
             return "\(agentName(p)) finished the shell command\(err) (output not recorded)"
         case "tool.post":

@@ -23,12 +23,21 @@ final class ShellAnalyzerTests: XCTestCase {
         XCTAssertEqual(kinds("sudo -u me env FOO=1 chrome-cli list tabs"), ["chrome-cli"])
     }
 
+    func testCommandsThatReachSafari() {
+        XCTAssertEqual(kinds("open -a Safari https://example.com"), ["safari"])
+        XCTAssertEqual(kinds("open -b com.apple.Safari"), ["safari"])
+        XCTAssertEqual(kinds("osascript -e 'tell application \"Safari\" to get URL of front document'"), ["safari"])
+        XCTAssertEqual(kinds("safaridriver --enable"), ["safari"])
+        XCTAssertEqual(kinds("open https://a.test && open -a Safari https://b.test"), ["open-url", "safari"])
+    }
+
     func testCommandsThatDont() {
         XCTAssertEqual(kinds("cd \"/Volumes/RAID4/Projects/chrome extension\" && git status"), [])
         XCTAssertEqual(kinds("grep -rn osascript . | grep 'Google Chrome'"), [])
         XCTAssertEqual(kinds("echo \"open https://example.com\""), [])
         XCTAssertEqual(kinds("git commit -m \"Open https://x.test in Chrome\""), [])
-        XCTAssertEqual(kinds("open -a Safari https://example.com"), [])
+        XCTAssertEqual(kinds("open -a Notes https://example.com"), [])
+        XCTAssertEqual(kinds("grep -rn Safari docs/"), [])
         XCTAssertEqual(kinds("osascript -e 'tell application \"Finder\" to activate'"), [])
         XCTAssertEqual(kinds("node scripts/e2e/check.mjs --since -10m"), [])
         XCTAssertEqual(kinds("pgrep -x \"Google Chrome\""), [])
@@ -101,6 +110,19 @@ final class RouteTranslatorTests: XCTestCase {
         XCTAssertEqual(e.p?["route"]?.stringValue, "automation")
         XCTAssertEqual(e.p?["browser"]?.boolValue, true)
         XCTAssertEqual(e.p?["input"]?["url"]?.stringValue, "https://example.com")
+    }
+
+    func testSafariIsItsOwnRoute() {
+        let shell = pre("Bash", ["command": "open -a Safari https://example.com"])!
+        XCTAssertEqual(shell.p?["browser"]?.boolValue, true)
+        XCTAssertEqual(shell.p?["route"]?.stringValue, "safari")
+        XCTAssertEqual(shell.p?["input"]?["command"]?.stringValue, "open -a Safari https://example.com")
+        let screen = pre("mcp__computer-use__app_type", ["app": "Safari", "text": "hunter2"])!
+        XCTAssertEqual(screen.p?["browser"]?.boolValue, true)
+        XCTAssertEqual(screen.p?["route"]?.stringValue, "safari")
+        XCTAssertFalse(screen.p!.canonicalString().contains("hunter2"))
+        XCTAssertTrue(HookTranslator.isBrowserCall(agent: .claude, toolName: "mcp__computer-use__open_application", input: ["app": "Safari"]))
+        XCTAssertFalse(HookTranslator.isBrowserCall(agent: .claude, toolName: "mcp__computer-use__open_application", input: ["app": "Notes"]))
     }
 
     func testComputerUse() {
@@ -264,6 +286,18 @@ final class RouteCorrelatorTests: XCTestCase {
         XCTAssertTrue(s.startReason.contains("computer use on Chrome (screenshot)"), s.startReason)
         let pre = try store.events(forSession: s.id).first { $0.event.cat == "tool.pre" }
         XCTAssertEqual(pre?.event.p?["chromeBy"]?.stringValue, "Chrome was the frontmost app")
+    }
+
+    func testWholeScreenComputerUseOnSafariStartsASession() throws {
+        let t0 = 3_000_000.0
+        let input: [String: JSONValue] = ["input": ["action": "left_click"], "chromeTarget": .null]
+        c.noteFrontmost(bundleId: "com.apple.Safari", at: t0 - 5000)
+        c.ingest([hook("tool.pre", t: t0, tool: "mcp__computer-use__left_click", route: "computer-use", browser: false, extra: input)])
+        let s = try XCTUnwrap(store.sessions().first)
+        XCTAssertTrue(s.startReason.contains("screen control of Safari (left_click)"), s.startReason)
+        let pre = try store.events(forSession: s.id).first { $0.event.cat == "tool.pre" }
+        XCTAssertEqual(pre?.event.p?["route"]?.stringValue, "safari")
+        XCTAssertEqual(pre?.event.p?["safariBy"]?.stringValue, "Safari was the frontmost app")
     }
 
     func testAgentStartedBrowserJoinsTheRuntimeSession() throws {

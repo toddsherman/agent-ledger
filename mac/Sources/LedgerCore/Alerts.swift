@@ -154,7 +154,11 @@ public enum Alerts {
                                  body: "First use of \(routeLabel(route)). Check that the record covers it."))
             }
         }
-        if let name = r.unseenBrowser {
+        if r.usedSafari {
+            out.append(Alert(key: "unseen:safari", title: "\(agent) used Safari, which the recorder can't see",
+                             body: "Agent Ledger records Chrome only. For what happened in Safari, the record holds only what the agent reported."))
+        }
+        if let name = r.unseenBrowser, name != "Safari" {
             out.append(Alert(key: "unseen", title: "\(agent) used a browser the recorder can't see",
                              body: "It used \(name). The record holds only what the agent reported."))
         }
@@ -180,6 +184,7 @@ public enum Alerts {
         var out = Set<String>()
         for se in events where se.event.cat == "tool.pre" || se.event.cat == "tool.logged" {
             guard se.event.p?["browser"]?.boolValue == true, let route = se.event.p?["route"]?.stringValue, !route.isEmpty else { continue }
+            if route == BrowserRoute.safari { continue } // Safari has its own alert, every time.
             let tool = se.event.p?["tool"]?.stringValue ?? ""
             if route == BrowserRoute.shell { out.insert(route); continue }
             let family = tool.range(of: "__", options: .backwards).map { String(tool[..<$0.lowerBound]) } ?? tool
@@ -191,6 +196,12 @@ public enum Alerts {
     static func routeLabel(_ key: String) -> String {
         let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
         let family = parts.count > 1 ? " (\(parts[1]))" : ""
+        if parts.count > 1 {
+            let tool = parts[1].lowercased()
+            if tool.contains("cua_repl") { return "Codex's own browser tool, which drives Chrome through its extension or the Codex app's built-in browser" }
+            if tool.contains("claude_browser") { return "the Claude desktop app's built-in browser" }
+            if tool.contains("claude-in-chrome") || tool.contains("claude_in_chrome") { return "the Claude in Chrome extension" }
+        }
         switch parts[0] {
         case BrowserRoute.shell: return "shell commands that reach Chrome"
         case BrowserRoute.automation: return "a browser automation tool" + family

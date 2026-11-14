@@ -238,6 +238,8 @@ public final class LedgerStore: @unchecked Sendable {
         );
         """)
         try db.run("INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', '1')")
+        // Before 0.4.1, messages programs sent the agent (<task-notification>…) were kept as session titles.
+        _ = try? db.run("UPDATE sessions SET task_label = NULL, label_source = NULL WHERE label_source = 'agent-prompt' AND task_label GLOB '<[A-Za-z]*'")
     }
 
     private func loadLastHash() throws -> String {

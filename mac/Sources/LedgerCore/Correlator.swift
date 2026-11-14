@@ -104,6 +104,8 @@ public final class Correlator {
         var lastActivityAt: Double
         var lastBrowserAt: Double?
         var pendingPrompt: LedgerEvent?
+        /// The last prompt that was a request, not a message a program sent the agent.
+        var pendingTask: String?
         var ledgerSession: String?
         var pendingTabCreateAt: Double?
         var pendingTabReason: String?
@@ -456,7 +458,17 @@ public final class Correlator {
         rt.lastActivityAt = max(rt.lastActivityAt, e.t)
         for k in ["agentPid", "ppid"] { if let pid = e.p?[k]?.intValue, pid > 1 { rt.pids.insert(Int32(pid)) } }
         var browser = e.p?["browser"]?.boolValue ?? false
-        let route = e.p?["route"]?.stringValue ?? BrowserRoute.extensionRoute
+        var route = e.p?["route"]?.stringValue ?? BrowserRoute.extensionRoute
+        if !browser, route == BrowserRoute.computerUse, e.p?["chromeTarget"] == .null, safariWasFrontmost(at: e.t),
+           case .object(var o) = e.p {
+            // Whole-screen computer use while Safari was in front acts on Safari.
+            browser = true
+            route = BrowserRoute.safari
+            o["browser"] = true
+            o["route"] = .string(route)
+            o["safariBy"] = "Safari was the frontmost app"
+            e.p = .object(o)
+        }
         if !browser, route == BrowserRoute.computerUse, e.p?["chromeTarget"] == .null, chromeWasFrontmost(at: e.t),
            case .object(var o) = e.p {
             // Whole-screen computer use while Chrome was in front acts on Chrome.
@@ -477,6 +489,7 @@ public final class Correlator {
         switch e.cat {
         case "turn.prompt":
             rt.pendingPrompt = e
+            if let prompt = e.p?["prompt"]?.stringValue, !Self.isProgramMessage(prompt) { rt.pendingTask = prompt }
             runtimes[key] = rt
             if let sid = rt.ledgerSession, let l = live[sid], l.record.state != "ended" {
                 persist(e, receivedAt: receivedAt, link: [l])
@@ -535,7 +548,7 @@ public final class Correlator {
                 if agent == .claude, let g = tabs[tab]?.groupId { groups[g] = (groups[g]?.title ?? "", agent.agentName) }
             }
             let viaDevTools = route == BrowserRoute.automation || kinds.contains("remote-debugging") || kinds.contains("automation-tool")
-            if (agent == .codex || viaDevTools) && tabIds.isEmpty {
+            if (agent == .codex || viaDevTools) && tabIds.isEmpty && route != BrowserRoute.safari {
                 // Codex hooks and DevTools-protocol tools don't name tabs: bind tabs whose debugger
                 // attached around this call.
                 let what = agent == .codex && route == BrowserRoute.extensionRoute ? "Codex browser call" : "\(Self.displayAgent(agent.agentName)) \(routeText)"
@@ -616,9 +629,16 @@ public final class Correlator {
 
     static let minimumLabelLength = 20
 
+    /// A message a program sent the agent (a task notification, a subagent's hand-back), not a
+    /// request from a person: it starts with a tag such as <task-notification>. Never a session title.
+    public static func isProgramMessage(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .range(of: #"^<[A-Za-z][\w-]*[\s>]"#, options: .regularExpression) != nil
+    }
+
     static func betterLabel(_ candidate: String, than current: String?) -> Bool {
         let c = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !c.isEmpty else { return false }
+        guard !c.isEmpty, !isProgramMessage(c) else { return false }
         guard let current, !current.isEmpty else { return true }
         return current.count < minimumLabelLength && c.count >= minimumLabelLength
     }
@@ -629,9 +649,12 @@ public final class Correlator {
         case BrowserRoute.shell:
             let names = ["open-url": "opened a URL", "applescript": "AppleScript", "launch-chrome": "started Chrome",
                          "remote-debugging": "DevTools debugging port", "automation-tool": "automation tool",
-                         "profile-data": "read Chrome profile files", "chrome-cli": "chrome-cli"]
+                         "profile-data": "read Chrome profile files", "chrome-cli": "chrome-cli", "safari": "also Safari"]
             return "shell command that reaches Chrome (\(kinds.map { names[$0] ?? $0 }.joined(separator: ", ")))"
         case BrowserRoute.automation: return "browser automation tool \(shortTool(tool))"
+        case BrowserRoute.safari:
+            if kinds.contains("safari") { return "shell command that reaches Safari" }
+            return "screen control of Safari (\(input?["action"]?.stringValue ?? shortTool(tool)))"
         case BrowserRoute.computerUse:
             return "computer use on Chrome (\(input?["action"]?.stringValue ?? shortTool(tool)))"
         default: return "browser tool \(shortTool(tool))"
@@ -656,7 +679,7 @@ public final class Correlator {
                                 attribution: "identified", detectorVersion: Self.detectorVersion)
         let l = Live(record: rec)
         l.runtimeKey = key
-        if settings.promptLabels, let prompt = rt.pendingPrompt?.p?["prompt"]?.stringValue {
+        if settings.promptLabels, let prompt = rt.pendingTask {
             l.record.taskLabel = prompt
             l.record.labelSource = "agent-prompt"
         }
@@ -860,6 +883,10 @@ public final class Correlator {
             return "physical \(hit.kind == .mouseDown ? "mouse click" : "key press") \(Int(abs(e.t - hit.t))) ms from the event while Chrome was frontmost"
         }
         return nil
+    }
+
+    private func safariWasFrontmost(at t: Double, slack: Double = 200) -> Bool {
+        frontmost.last(where: { $0.t <= t + slack })?.bundleId.hasPrefix("com.apple.Safari") ?? false
     }
 
     private func chromeWasFrontmost(at t: Double, slack: Double = 200) -> Bool {

@@ -215,7 +215,11 @@ public enum AgentLogs {
             ]
             if let cmd = BrowserRoute.shellCommand(toolName: c.tool, input: c.input) {
                 p["input"] = ["command": .string(Redactor.truncate(Redactor.scrub(cmd), max: 2000))]
-                p["route"] = .string(BrowserRoute.shell)
+                p["route"] = .string(ShellAnalyzer.analyze(cmd).kinds == ["safari"] ? BrowserRoute.safari : BrowserRoute.shell)
+            } else if let input = c.input, BrowserRoute.byName(agent: agent, toolName: c.tool) == BrowserRoute.computerUse,
+                      BrowserRoute.computerUseTargetsChrome(input) != true, BrowserRoute.computerUseTargetsSafari(input) {
+                p["input"] = BrowserRoute.computerUseSummary(input)
+                p["route"] = .string(BrowserRoute.safari)
             } else if let input = c.input {
                 p["input"] = Redactor.sanitize(input)
                 let tabs = HookTranslator.tabIds(in: input)

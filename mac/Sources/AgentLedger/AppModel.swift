@@ -382,7 +382,7 @@ final class AppModel: ObservableObject {
             guard r.pagesRead > 0 || !r.scripts.isEmpty || !r.changes.isEmpty || r.reportedActions > 0 else { return }
             // The agent stayed in its own app's browser and never touched Chrome.
             if r.inAppBrowserOnly && !settings.inAppBrowserNotices { return }
-            self.notifier.post(title: "\(Correlator.displayAgent(s.agent)) finished in \(r.inAppBrowserOnly ? "its own browser" : "Chrome")" + (r.changes.isEmpty ? "" : ": \(r.changes.count) change\(r.changes.count == 1 ? "" : "s")"),
+            self.notifier.post(title: "\(Correlator.displayAgent(s.agent)) finished in \(r.inAppBrowserOnly ? "its own browser" : r.unseenBrowser == "Safari" ? "Safari" : "Chrome")" + (r.changes.isEmpty ? "" : ": \(r.changes.count) change\(r.changes.count == 1 ? "" : "s")"),
                                body: r.oneLine, session: s.id, id: "ended-\(s.id)")
         }
     }

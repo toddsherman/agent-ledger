@@ -8,11 +8,13 @@ import Foundation
 /// - `shell`: a shell command that opens URLs in Chrome, scripts it with AppleScript, starts
 ///   Chrome with automation flags, talks to its debugging port, or reads its profile files.
 /// - `computer-use`: screen-level control aimed at Chrome.
+/// - `safari`: a shell command or screen control aimed at Safari, which the recorder can't see.
 public enum BrowserRoute {
     public static let extensionRoute = "extension"
     public static let automation = "automation"
     public static let shell = "shell"
     public static let computerUse = "computer-use"
+    public static let safari = "safari"
 
     static let automationWords = ["playwright", "puppeteer", "devtools", "browser", "selenium", "chrome",
                                   "stagehand", "browserbase", "hyperbrowser", "webdriver"]
@@ -54,7 +56,25 @@ public enum BrowserRoute {
     /// Whether a computer-use input targets Chrome: true or false when it names apps, nil when
     /// it acts on the whole screen (the frontmost app decides).
     public static func computerUseTargetsChrome(_ input: JSONValue?) -> Bool? {
-        guard let o = input?.objectValue else { return nil }
+        let named = computerUseApps(input)
+        guard !named.isEmpty else { return nil }
+        return named.contains { isChromeName($0) }
+    }
+
+    /// Whether a computer-use input names Safari.
+    public static func computerUseTargetsSafari(_ input: JSONValue?) -> Bool {
+        computerUseApps(input).contains { isSafariName($0) }
+    }
+
+    static func isSafariName(_ s: String) -> Bool {
+        let l = s.lowercased()
+        return l == "safari" || l == "safari.app" || l.hasSuffix("/safari.app") || l == "safari technology preview"
+            || l.hasPrefix("com.apple.safari")
+    }
+
+    /// The apps a computer-use input names.
+    static func computerUseApps(_ input: JSONValue?) -> [String] {
+        guard let o = input?.objectValue else { return [] }
         var named: [String] = []
         for key in ["app", "application", "bundle_id", "bundleId", "apps", "applications", "name"] {
             if let s = o[key]?.stringValue { named.append(s) }
@@ -65,8 +85,7 @@ public enum BrowserRoute {
                 }
             }
         }
-        guard !named.isEmpty else { return nil }
-        return named.contains { isChromeName($0) }
+        return named
     }
 
     static func isChromeName(_ s: String) -> Bool {
@@ -113,6 +132,9 @@ public enum ShellAnalyzer {
     static let chromeMention = try! NSRegularExpression(
         pattern: "google chrome|com\\.google\\.chrome|application\\(['\"]chrome|\"chrome\"|chromium", options: [.caseInsensitive])
 
+    static let safariMention = try! NSRegularExpression(
+        pattern: "\"safari( technology preview)?\"|'safari'|com\\.apple\\.safari|application\\(['\"]safari", options: [.caseInsensitive])
+
     public static func analyze(_ command: String) -> ShellFinding {
         var f = ShellFinding()
         func add(_ k: String) { if !f.kinds.contains(k) { f.kinds.append(k) } }
@@ -120,6 +142,8 @@ public enum ShellAnalyzer {
         // AppleScript fed through a heredoc still counts (the whole command is searched), but
         // other heredoc bodies are data, not commands (a script writing docs about Chrome).
         let mentionsChrome = chromeMention.firstMatch(in: command, range: NSRange(location: 0, length: (command as NSString).length)) != nil
+
+        let mentionsSafari = safariMention.firstMatch(in: command, range: NSRange(location: 0, length: (command as NSString).length)) != nil
 
         for seg in segments(stripHeredocs(command)) {
             if seg.contains(where: { w in let l = w.lowercased(); return profileMarkers.contains { l.contains($0) } }) {
@@ -137,12 +161,18 @@ public enum ShellAnalyzer {
                 for (i, a) in args.enumerated() where (a == "-a" || a == "-b") && i + 1 < args.count { app = args[i + 1] }
                 // No -a/-b means the default browser; another named app isn't Chrome.
                 let chromeApp = app.map(ShellAnalyzer.isChromeApp) ?? true
+                if let app, BrowserRoute.isSafariName(app) {
+                    add("safari")
+                    f.urls += urls
+                }
                 if chromeApp && (!urls.isEmpty || app != nil) {
                     add("open-url")
                     f.urls += urls
                 }
             }
             if program == "osascript" && mentionsChrome { add("applescript") }
+            if program == "osascript" && mentionsSafari { add("safari") }
+            if program == "safaridriver" || first.contains("Safari.app/Contents/MacOS/Safari") { add("safari") }
             let launches = chromeBinaries.contains(program) || first.contains(".app/Contents/MacOS/Google Chrome") ||
                 first.contains(".app/Contents/MacOS/Chromium")
             if launches {

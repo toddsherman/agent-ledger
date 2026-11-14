@@ -36,7 +36,7 @@ enum Fmt {
     static func task(_ label: String?) -> String? {
         guard let label else { return nil }
         let text = oneLine(label)
-        if text.isEmpty || text.range(of: #"^<[A-Za-z][\w-]*[ >]"#, options: .regularExpression) != nil { return nil }
+        if text.isEmpty || Correlator.isProgramMessage(text) { return nil }
         return text
     }
 

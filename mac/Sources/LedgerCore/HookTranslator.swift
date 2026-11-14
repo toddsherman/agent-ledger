@@ -37,6 +37,7 @@ public enum HookTranslator {
         if BrowserRoute.isClosingCall(agent: agent, toolName: toolName, input: input) { return false }
         if let route = BrowserRoute.byName(agent: agent, toolName: toolName) {
             return route != BrowserRoute.computerUse || BrowserRoute.computerUseTargetsChrome(input) == true
+                || BrowserRoute.computerUseTargetsSafari(input)
         }
         if let cmd = BrowserRoute.shellCommand(toolName: toolName, input: input) { return !ShellAnalyzer.analyze(cmd).isEmpty }
         return isBrowserTool(agent: agent, toolName: toolName, input: input)
@@ -137,13 +138,17 @@ public enum HookTranslator {
             let shellCommand = route == nil ? BrowserRoute.shellCommand(toolName: toolName, input: toolInput) : nil
             if let cmd = shellCommand {
                 let f = ShellAnalyzer.analyze(cmd)
-                if !f.isEmpty { route = BrowserRoute.shell; shell = (cmd, f) }
+                // A command that reaches only Safari is its own route: the recorder can't see Safari.
+                if !f.isEmpty { route = f.kinds == ["safari"] ? BrowserRoute.safari : BrowserRoute.shell; shell = (cmd, f) }
             } else if route == nil, !BrowserRoute.isClosingCall(agent: agent, toolName: toolName, input: toolInput),
                       isBrowserTool(agent: agent, toolName: toolName, input: toolInput) {
                 route = BrowserRoute.extensionRoute
             }
             var chromeTarget: Bool?
             if route == BrowserRoute.computerUse { chromeTarget = BrowserRoute.computerUseTargetsChrome(toolInput) }
+            if route == BrowserRoute.computerUse, chromeTarget != true, BrowserRoute.computerUseTargetsSafari(toolInput) {
+                route = BrowserRoute.safari
+            }
             // Computer use on the whole screen is decided later from the frontmost app.
             let browser = route != nil && (route != BrowserRoute.computerUse || chromeTarget == true)
             p["tool"] = .string(toolName)
@@ -164,6 +169,9 @@ public enum HookTranslator {
             } else if route == BrowserRoute.computerUse, chromeTarget != false {
                 p["input"] = BrowserRoute.computerUseSummary(toolInput)
                 p["chromeTarget"] = chromeTarget.map { .bool($0) } ?? .null
+                if cat != "tool.pre" { p["result"] = summarizeResult(o["tool_response"] ?? o["error"]) }
+            } else if route == BrowserRoute.safari {
+                p["input"] = BrowserRoute.computerUseSummary(toolInput)
                 if cat != "tool.pre" { p["result"] = summarizeResult(o["tool_response"] ?? o["error"]) }
             } else if browser {
                 if let toolInput { p["input"] = Redactor.sanitize(toolInput) }

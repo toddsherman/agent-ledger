@@ -181,6 +181,35 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(r.unseenBrowser, "the Codex app's built-in browser")
     }
 
+    func testAlertWhenAnAgentUsesSafari() {
+        // Safari alongside Chrome: the Chrome part is still observed.
+        tool("navigate", at: 1000, id: "a", input: ["url": "https://example.com", "tabId": 5], end: 2000)
+        add("tool.pre", at: 3000, src: "hook.claude", kind: EventKind.attemptedOp, tab: nil,
+            p: ["tool": "Bash", "toolUseId": "s", "input": ["command": "open -a Safari https://bank.example"],
+                "route": "safari", "routeKinds": ["safari"], "browser": true])
+        let r = report()
+        XCTAssertTrue(r.usedSafari)
+        XCTAssertNil(r.unseenBrowser)
+        let alerts = Alerts.evaluate(report: r, events: events, settings: LedgerSettings(), knownRoutes: [])
+        XCTAssertTrue(alerts.contains { $0.key == "unseen:safari" && $0.notify }, "\(alerts.map(\.key))")
+        XCTAssertFalse(alerts.contains { $0.key.hasPrefix("route:safari") || $0.key == "unseen" }, "\(alerts.map(\.key))")
+    }
+
+    func testRouteWordingNamesTheAgentsOwnTools() {
+        XCTAssertTrue(Alerts.routeLabel("extension:mcp__cua_repl").hasPrefix("Codex's own browser tool"))
+        XCTAssertEqual(Alerts.routeLabel("extension:mcp__claude-in-chrome"), "the Claude in Chrome extension")
+        XCTAssertEqual(Alerts.routeLabel("automation:mcp__playwright"), "a browser automation tool (mcp__playwright)")
+    }
+
+    func testProgramMessagesAreNotTasks() {
+        XCTAssertTrue(Correlator.isProgramMessage("<task-notification>\n<task-id>b1</task-id>"))
+        XCTAssertTrue(Correlator.isProgramMessage("<agent-message from=\"site-auditor\">done"))
+        XCTAssertFalse(Correlator.isProgramMessage("Update the pricing page"))
+        XCTAssertFalse(Correlator.isProgramMessage("<3 this, now fix the header"))
+        XCTAssertFalse(Correlator.betterLabel("<task-notification> a long enough message to count", than: nil))
+        XCTAssertTrue(Correlator.betterLabel("Update the pricing page", than: nil))
+    }
+
     func testLookalikeDomains() {
         for (host, real) in [("paypa1.com", "paypal.com"), ("paypal.account-verify.net", "paypal.com"), ("secure-paypal.com", "paypal.com"),
                              ("chase-secure-login.com", "chase.com"), ("gihtub.com", "github.com"), ("githubb.com", "github.com"),
