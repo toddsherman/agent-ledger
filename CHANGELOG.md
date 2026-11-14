@@ -3,6 +3,16 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.4.0
+
+Three new alerts for sites that are dangerous in themselves, not just sensitive.
+
+- **Data drop sites.** A new built-in group of webhook catchers, tunnels, paste sites and anonymous file hosts. An alert is raised when an agent changes something there, and also when any page in an agent's session sends data to one, which is how a prompt injection usually carries something out.
+- **Chrome's warning page.** When Chrome shows its red Safe Browsing warning in an agent's tab, that raises an alert, and a stronger one if the page behind it is opened anyway. Always on. It relies on the warning page's English title, so it doesn't work in a Chrome set to another language.
+- **Lookalike sites.** An alert when an agent changes something on a site whose name imitates a well-known one, such as `paypa1.com` or `chase-secure-login.com`. Judged from the name alone on this Mac, so a few will be wrong; there is a switch in Settings → Alerts.
+
+Nothing is downloaded or sent anywhere for these: the lists ship with the app.
+
 ## 0.3.2
 
 - Session rows show the agent's logo (the icon of the installed Claude or Codex app) instead of its name, with the task as the title and the sites underneath. A guessed agent's logo is dimmed.

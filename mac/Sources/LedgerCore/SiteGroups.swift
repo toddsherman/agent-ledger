@@ -15,7 +15,7 @@ public struct SiteGroup: Sendable, Identifiable {
 public enum SiteGroups {
     public static let customName = "Your list"
 
-    public static let all: [SiteGroup] = [financial, email, passwords, identity, developer, shopping, government, social, storage, chat]
+    public static let all: [SiteGroup] = [financial, email, passwords, identity, developer, shopping, government, social, drops, storage, chat]
 
     public static func group(_ id: String) -> SiteGroup? { all.first { $0.id == id } }
 
@@ -167,6 +167,31 @@ public enum SiteGroups {
             "youtube.com", "tiktok.com", "bsky.app", "mastodon.social", "pinterest.com", "tumblr.com", "snapchat.com",
             "twitch.tv", "quora.com", "nextdoor.com", "news.ycombinator.com", "stackoverflow.com", "producthunt.com",
             "substack.com", "medium.com", "wordpress.com", "ghost.io", "dev.to",
+        ])
+
+    /// Not sites to protect but places data could be taken to: they accept whatever is sent to them.
+    /// A prompt injection that steals something usually ends with a request to one of these.
+    static let drops = SiteGroup(
+        id: "drops", name: "Data drop sites",
+        detail: "Webhook catchers, tunnels, paste sites and anonymous file hosts. Also alerts when a page sends data to one",
+        defaultOn: true,
+        hosts: [
+            // Request catchers
+            "webhook.site", "webhook.cool", "requestbin.com", "pipedream.net", "requestcatcher.com", "beeceptor.com",
+            "hookbin.com", "postb.in", "requestinspector.com", "typedwebhook.tools", "smee.io", "mockbin.io",
+            "interact.sh", "interactsh.com", "oast.fun", "oast.pro", "oast.live", "oast.site", "oast.online", "oast.me",
+            "burpcollaborator.net", "oastify.com", "dnslog.cn", "canarytokens.com",
+            // Tunnels to someone's machine
+            "ngrok.io", "ngrok.app", "ngrok-free.app", "ngrok-free.dev", "ngrok.dev", "trycloudflare.com", "loca.lt",
+            "localtunnel.me", "serveo.net", "localhost.run", "lhr.life", "pinggy.io", "tunnelmole.net",
+            // Paste sites
+            "pastebin.com", "paste.ee", "hastebin.com", "dpaste.com", "dpaste.org", "rentry.co", "rentry.org",
+            "privatebin.net", "ghostbin.com", "termbin.com", "ix.io", "sprunge.us", "paste.rs", "controlc.com",
+            // Anonymous file hosts
+            "transfer.sh", "file.io", "0x0.st", "tmpfiles.org", "catbox.moe", "gofile.io", "temp.sh", "bashupload.com",
+            "anonfiles.com", "pixeldrain.com", "filebin.net", "uguu.se",
+            // Bot endpoints used to carry data out
+            "api.telegram.org",
         ])
 
     static let storage = SiteGroup(

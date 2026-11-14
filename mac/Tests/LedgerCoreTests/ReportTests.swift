@@ -181,6 +181,64 @@ final class ReportTests: XCTestCase {
         XCTAssertEqual(r.unseenBrowser, "the Codex app's built-in browser")
     }
 
+    func testLookalikeDomains() {
+        for (host, real) in [("paypa1.com", "paypal.com"), ("paypal.account-verify.net", "paypal.com"), ("secure-paypal.com", "paypal.com"),
+                             ("chase-secure-login.com", "chase.com"), ("gihtub.com", "github.com"), ("githubb.com", "github.com"),
+                             ("g00gle.com", "google.com"), ("rnicrosoft.com", "microsoft.com"), ("login.wellsfarg0.com", "wellsfargo.com"),
+                             ("irs-gov.com", "a .gov site"), ("irs.gov.refund-status.com", "a .gov site")] {
+            XCTAssertEqual(Lookalike.match(host: host)?.real, real, host)
+        }
+        for host in ["paypal.com", "www.paypal.com", "github.com", "raw.githubusercontent.com", "amazon.fr", "google.dev", "strike.me",
+                     "s3.amazonaws.com", "irs.gov", "service.gov.uk", "example.gov.br", "localhost", "cms.test", "192.168.1.1",
+                     "todd.sh", "vercel.app", "my-site.vercel.app", "stripe.network", "accounts.google.com", "pineapple.com"] {
+            XCTAssertNil(Lookalike.match(host: host), host)
+        }
+    }
+
+    func testAlertForChangeOnLookalikeSite() {
+        add("nav.committed", at: 500, url: "https://paypa1.com/login", p: ["transition": "link"])
+        tool("computer", at: 1000, id: "a", input: ["action": "left_click", "tabId": 5], end: 3000)
+        add("ui.click", at: 1200, src: "ext.content", url: "https://paypa1.com/login", actor: "agent:claude-code",
+            p: ["target": ["name": "Delete record", "role": "button"]])
+        add("net.request", at: 1400, url: "https://paypa1.com/api/x", actor: "agent:claude-code",
+            p: ["method": "DELETE", "type": "fetch", "mutating": true, "status": 200])
+        let alerts = Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil)
+        XCTAssertTrue(alerts.contains { $0.key == "lookalike:paypa1.com" && $0.title.contains("looks like paypal.com") }, "\(alerts.map(\.key))")
+        var off = LedgerSettings()
+        off.lookalikeAlerts = false
+        XCTAssertFalse(Alerts.evaluate(report: report(), events: events, settings: off, knownRoutes: nil).contains { $0.key.hasPrefix("lookalike:") })
+    }
+
+    func testAlertForDataSentToADropSite() {
+        add("nav.committed", at: 500, url: "https://docs.example.com/page", p: ["transition": "link"])
+        // An image request that carries data in its address, the usual way out after a prompt injection.
+        add("net.request", at: 900, url: "https://webhook.site/abc?d=secret", p: ["method": "GET", "type": "image", "initiator": "https://docs.example.com", "status": 200])
+        add("net.request", at: 950, url: "https://webhook.site/abc?d=more", p: ["method": "GET", "type": "image", "initiator": "https://docs.example.com", "status": 200])
+        let alerts = Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil)
+        XCTAssertEqual(alerts.filter { $0.key.hasPrefix("drop:") }.map(\.key), ["drop:webhook.site"])
+        var off = LedgerSettings()
+        off.siteGroups["drops"] = false
+        XCTAssertTrue(Alerts.evaluate(report: report(), events: events, settings: off, knownRoutes: nil).isEmpty)
+    }
+
+    func testBrowsingADropSiteIsNotASend() {
+        add("nav.committed", at: 500, url: "https://pastebin.com/", p: ["transition": "link"])
+        add("net.request", at: 600, url: "https://pastebin.com/themes/style.css", p: ["method": "GET", "type": "stylesheet", "initiator": "https://pastebin.com", "status": 200])
+        XCTAssertTrue(Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil).isEmpty)
+        add("net.request", at: 700, url: "https://pastebin.com/api/api_post.php", p: ["method": "POST", "type": "xmlhttprequest", "initiator": "https://pastebin.com", "status": 200])
+        XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil).map(\.key), ["drop:pastebin.com"])
+    }
+
+    func testAlertForChromeWarningPage() {
+        add("tab.updated", at: 500, url: "https://bad.example.net/login", p: ["title": "bad.example.net/login", "status": "loading"])
+        add("tab.updated", at: 520, url: "https://bad.example.net/login", p: ["title": "Security error", "status": "loading"])
+        add("tab.updated", at: 540, url: "https://bad.example.net/login", p: ["title": "Security error", "status": "complete"])
+        XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil).map(\.key), ["warned:bad.example.net"])
+        // The page behind the warning then loads: someone clicked through.
+        add("nav.committed", at: 900, url: "https://bad.example.net/login", p: ["transition": "link"])
+        XCTAssertEqual(Alerts.evaluate(report: report(), events: events, settings: LedgerSettings(), knownRoutes: nil).map(\.key), ["warned-past:bad.example.net"])
+    }
+
     func testInAppBrowserSessionsDontNotify() {
         // The Claude desktop app's browser pane: hooks report the calls, Chrome sees nothing.
         add("tool.pre", at: 1000, src: "hook.claude", kind: EventKind.attemptedOp, tab: nil,

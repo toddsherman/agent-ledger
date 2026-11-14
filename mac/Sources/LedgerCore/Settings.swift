@@ -29,6 +29,8 @@ public struct LedgerSettings: Codable, Equatable, Sendable {
     public var sensitiveExceptions: [String] = []
     /// Action alerts switched off (or back on), by `Alerts.ActionKind` id. Missing means on.
     public var actionAlerts: [String: Bool] = [:]
+    /// Alert when an agent changes something on a site whose name imitates a well-known one.
+    public var lookalikeAlerts = true
 
     public init() {}
 
@@ -49,6 +51,7 @@ public struct LedgerSettings: Codable, Equatable, Sendable {
         siteGroups = try c.decodeIfPresent([String: Bool].self, forKey: .siteGroups) ?? siteGroups
         sensitiveExceptions = try c.decodeIfPresent([String].self, forKey: .sensitiveExceptions) ?? sensitiveExceptions
         actionAlerts = try c.decodeIfPresent([String: Bool].self, forKey: .actionAlerts) ?? actionAlerts
+        lookalikeAlerts = try c.decodeIfPresent(Bool.self, forKey: .lookalikeAlerts) ?? lookalikeAlerts
     }
 
     public static func matches(host: String?, in list: [String]) -> Bool {

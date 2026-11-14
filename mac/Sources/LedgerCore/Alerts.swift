@@ -33,6 +33,10 @@ public enum Alerts {
         ActionKind(id: "upload", name: "File uploads", detail: "A file from this Mac given to a page", tag: nil),
     ]
 
+    /// The tab title Chrome gives its Safe Browsing warning page. English only: a Chrome in another
+    /// language uses another title, and the warning goes unnoticed.
+    static let chromeWarningTitle = "Security error"
+
     static func actionKind(tag: String) -> ActionKind? { actionKinds.first { $0.tag == tag } }
 
     static let gapTitles: [String: String] = [
@@ -72,6 +76,61 @@ public enum Alerts {
                   !out.contains(where: { $0.key == "sensitive-script:\(h)" }) else { continue }
             out.append(Alert(key: "sensitive-script:\(h)", title: "\(agent) ran a script on \(h) that could change it",
                              body: "The script " + s.signals.joined(separator: ", ") + ".", eventId: s.id))
+        }
+
+        // 1b. A change on a site whose name imitates a well-known one.
+        if settings.lookalikeAlerts {
+            var perLookalike: [String: [SessionReport.Change]] = [:]
+            for c in r.changes where !c.reported && c.actor != "Likely you" {
+                guard let h = c.host, !settings.isSensitive(host: h),
+                      !LedgerSettings.matches(host: h, in: settings.sensitiveExceptions), Lookalike.match(host: h) != nil else { continue }
+                perLookalike[h, default: []].append(c)
+            }
+            for (h, cs) in perLookalike.sorted(by: { $0.key < $1.key }) {
+                let m = Lookalike.match(host: h)!
+                let first = cs.min { $0.t < $1.t }!
+                out.append(Alert(key: "lookalike:\(h)", title: "\(agent) changed something on \(h), which looks like \(m.real)",
+                                 body: "Check the address: \(m.reason). " + first.text + (cs.count > 1 ? " (and \(cs.count - 1) more)" : ""),
+                                 eventId: first.id))
+            }
+        }
+
+        // 1c. Data sent to a site that collects whatever it is given (a webhook catcher, a paste site).
+        if settings.groupEnabled("drops") {
+            var seenDrops = Set<String>()
+            for se in events where se.event.cat == "net.request" {
+                guard let h = EventClass.host(se.event.url), let m = SiteGroups.match(host: h), m.group.id == "drops",
+                      !LedgerSettings.matches(host: h, in: settings.sensitiveExceptions) else { continue }
+                let initiator = se.event.p?["initiator"]?.stringValue
+                if EventClass.isAgentUI(url: initiator) { continue }
+                let method = se.event.p?["method"]?.stringValue ?? "GET"
+                let from = EventClass.host(initiator)
+                // Browsing the drop site itself is not a send; a request from another page, or one that carries a body, is.
+                let fromElsewhere = from.map { !($0 == m.entry || $0.hasSuffix("." + m.entry)) } ?? false
+                guard method != "GET" || fromElsewhere else { continue }
+                guard !out.contains(where: { $0.key == "sensitive:\(h)" }), seenDrops.insert(h).inserted else { continue }
+                out.append(Alert(key: "drop:\(h)", title: "Data may have been sent to \(h)",
+                                 body: "During \(agent)'s session, \(from ?? "a page") made a \(method) request to \(h). That site collects whatever is sent to it.",
+                                 eventId: se.id))
+            }
+        }
+
+        // 1d. Chrome showed its own red warning page (Safe Browsing) in a tab of this session.
+        var warned = Set<String>()
+        for se in events where se.event.cat == "tab.updated" && se.event.p?["title"]?.stringValue == chromeWarningTitle {
+            guard let url = se.event.url, url.hasPrefix("http"), let h = EventClass.host(url), let tab = se.event.tab,
+                  warned.insert(h).inserted else { continue }
+            let wentPast = events.contains {
+                $0.event.t > se.event.t && $0.event.tab == tab && $0.event.cat == "nav.committed" && ($0.event.frame ?? 0) == 0
+                    && EventClass.host($0.event.url) == h
+            }
+            if wentPast {
+                out.append(Alert(key: "warned-past:\(h)", title: "\(agent)'s session went past Chrome's warning for \(h)",
+                                 body: "Chrome marked \(h) as dangerous and the page was opened anyway. Check what happened there.", eventId: se.id))
+            } else {
+                out.append(Alert(key: "warned:\(h)", title: "Chrome warned about \(h) in \(agent)'s session",
+                                 body: "Chrome marked \(h) as dangerous and showed its warning page. The page behind it was not opened.", eventId: se.id))
+            }
         }
 
         // 2. A consequential action anywhere (send, delete, pay, …), named by the control.

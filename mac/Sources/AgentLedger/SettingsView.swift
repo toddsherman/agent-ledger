@@ -159,10 +159,17 @@ struct SettingsView: View {
                         }
                     }
                 }
+                Toggle(isOn: $draft.lookalikeAlerts) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Lookalike sites")
+                        Text("A change on a site whose name imitates a well-known one, such as paypa1.com or chase-secure-login.com. Judged from the name alone, so a few will be wrong.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } header: {
                 Text("Actions on any site")
             } footer: {
-                Text("These are recognised from the name of the button or the fields in the form, so some will be missed and a few will be wrong. Two alerts are always on: a new way of reaching Chrome, and a browser Agent Ledger can't see.")
+                Text("These are recognised from the name of the button or the fields in the form, so some will be missed and a few will be wrong. Three alerts are always on: a new way of reaching Chrome, a browser Agent Ledger can't see, and Chrome's own red warning page appearing in an agent's tab.")
                     .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
