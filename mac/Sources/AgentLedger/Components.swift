@@ -23,6 +23,46 @@ enum Fmt {
         hosts.filter { ($0.contains(".") || $0 == "localhost") && $0 != "ogs.google.com" && !$0.hasSuffix(".google.com/_/chrome") }
     }
 
+    /// What to call a session in a list: its task, else the sites it touched, else when it started.
+    static func title(label: String?, hosts: [String], startedAt: Double) -> String {
+        if let task = task(label) { return task }
+        let s = sites(hosts)
+        if !s.isEmpty { return siteList(s) }
+        return "Session at \(shortClock(startedAt))"
+    }
+
+    /// The label as a task, on one line. Nil when there is none, or when it is a message
+    /// a program sent the agent (it starts with a tag such as <task-notification>) and not a request.
+    static func task(_ label: String?) -> String? {
+        guard let label else { return nil }
+        let text = oneLine(label)
+        if text.isEmpty || text.range(of: #"^<[A-Za-z][\w-]*[ >]"#, options: .regularExpression) != nil { return nil }
+        return text
+    }
+
+    /// Date and time for a list row: no year for this year, and just the time for today.
+    static func listDay(_ ms: Double) -> String {
+        let date = Date(timeIntervalSince1970: ms / 1000)
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return shortTime.string(from: date) }
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate(cal.isDate(date, equalTo: Date(), toGranularity: .year) ? "MMMd jmm" : "yMMMd")
+        return f.string(from: date)
+    }
+
+    /// A session's one-line result without the agent's name in front, for rows that show its logo.
+    static func withoutAgent(_ line: String, agent: String) -> String {
+        let name = Correlator.displayAgent(agent) + " "
+        guard line.hasPrefix(name) else { return line }
+        let rest = line.dropFirst(name.count)
+        return rest.prefix(1).uppercased() + rest.dropFirst()
+    }
+
+    /// Up to three sites, then how many more.
+    static func siteList(_ sites: [String]) -> String {
+        sites.prefix(3).joined(separator: ", ") + (sites.count > 3 ? " +\(sites.count - 3)" : "")
+    }
+
     static func duration(_ ms: Double) -> String {
         let s = Int(max(0, ms) / 1000)
         if s < 60 { return "\(s)s" }
@@ -89,12 +129,50 @@ enum Palette {
     }
 }
 
+/// The agent's logo: the icon of its installed app (Claude, Codex), so it matches the Dock and
+/// nothing of theirs is shipped in this app. Falls back to a plain symbol when the app isn't installed.
 struct AgentBadge: View {
     let agent: String
+    var size: CGFloat = 18
+    /// The agent is a guess, not confirmed: the logo is dimmed.
+    var uncertain = false
+
     var body: some View {
-        Image(systemName: agent == "codex" ? "chevron.left.forwardslash.chevron.right" : (agent == "claude-code" ? "sparkle" : "questionmark.circle"))
-            .foregroundStyle(Palette.agent(agent))
-            .frame(width: 18)
+        Group {
+            if let icon = AgentIcons.icon(for: agent) {
+                Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
+            } else {
+                Image(systemName: agent == "codex" ? "chevron.left.forwardslash.chevron.right" : (agent == "claude-code" ? "sparkle" : "questionmark.circle"))
+                    .font(.system(size: size * 0.7))
+                    .foregroundStyle(Palette.agent(agent))
+                    .frame(width: size, height: size)
+            }
+        }
+        .opacity(uncertain ? 0.55 : 1)
+        .help(Correlator.displayAgent(agent))
+        .accessibilityLabel(Correlator.displayAgent(agent))
+    }
+}
+
+@MainActor
+enum AgentIcons {
+    private static let bundleIds: [String: [String]] = [
+        "claude-code": ["com.anthropic.claudefordesktop"],
+        "codex": ["com.openai.codex", "com.openai.chat"],
+    ]
+    private static var cache: [String: NSImage?] = [:]
+
+    static func icon(for agent: String) -> NSImage? {
+        if let hit = cache[agent] { return hit }
+        var found: NSImage?
+        for id in bundleIds[agent] ?? [] {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                found = NSWorkspace.shared.icon(forFile: url.path)
+                break
+            }
+        }
+        cache[agent] = found
+        return found
     }
 }
 

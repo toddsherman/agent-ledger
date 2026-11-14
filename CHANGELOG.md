@@ -3,6 +3,12 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.3.2
+
+- Session rows show the agent's logo (the icon of the installed Claude or Codex app) instead of its name, with the task as the title and the sites underneath. A guessed agent's logo is dimmed.
+- Rows with no task are titled by their sites, or by when they started. Messages a program sent the agent are no longer used as titles.
+- Dates in the list are shorter: no year for this year, and just the time for today.
+
 ## 0.3.1
 
 - Fixed: the menu bar panel no longer hangs below the menu bar after part of it collapses (for example after "Hide details").

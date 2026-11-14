@@ -103,18 +103,19 @@ struct MenuView: View {
     }
 
     private func sessionRow(_ s: LiveSessionInfo) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+        AgentBadge(agent: s.agent, size: 24, uncertain: s.attribution != "identified")
         VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Fmt.title(label: s.label, hosts: [], startedAt: s.startedAt))
+                    .font(.subheadline.weight(.semibold)).lineLimit(2)
+                Spacer(minLength: 4)
+                Text(s.state == "possible" ? "Checking…" : Fmt.duration(now.timeIntervalSince1970 * 1000 - s.startedAt))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary).fixedSize()
+            }
             HStack(spacing: 6) {
-                AgentBadge(agent: s.agent)
-                Text(Correlator.displayAgent(s.agent)).font(.subheadline.weight(.semibold))
                 Chip(text: Words.attribution(s.attribution).text, color: Palette.attribution(s.attribution), help: Words.attribution(s.attribution).help)
                 if s.coverage != "ok" { Chip(text: Words.incompleteRecord, color: .orange, help: Words.incompleteRecordHelp) }
-                Spacer()
-                Text(s.state == "possible" ? "Checking…" : Fmt.duration(now.timeIntervalSince1970 * 1000 - s.startedAt))
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            if let label = s.label {
-                Text(label).font(.caption).lineLimit(2).foregroundStyle(.secondary)
             }
             HStack {
                 Text("\(s.tabs.count) tab\(s.tabs.count == 1 ? "" : "s") · \(Words.state(s.state).text.lowercased())").font(.caption2).foregroundStyle(.secondary)
@@ -126,6 +127,7 @@ struct MenuView: View {
                         .help("Ends this session's record. The agent keeps running.")
                 }
             }
+        }
         }
         .padding(8)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))

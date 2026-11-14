@@ -93,30 +93,44 @@ struct SessionRow: View {
     var digest: AppModel.Digest?
     var s: SessionRecord { summary.session }
 
+    /// The sites under the title. Left out when the title is already the list of sites.
+    private var sitesLine: String {
+        let sites = Fmt.sites(summary.hosts)
+        let hasTask = Fmt.task(s.taskLabel) != nil
+        return hasTask ? Fmt.siteList(sites) : ""
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                AgentBadge(agent: s.agent)
-                Text(Correlator.displayAgent(s.agent)).font(.subheadline.weight(.semibold))
-                if s.attribution != "identified" {
-                    Chip(text: Words.attribution(s.attribution).text, color: Palette.attribution(s.attribution), help: Words.attribution(s.attribution).help)
-                }
-                if s.state != "ended" { Chip(text: Words.state(s.state).text, color: .red, help: Words.state(s.state).help) }
-                Spacer()
+        HStack(alignment: .top, spacing: 10) {
+        AgentBadge(agent: s.agent, size: 26, uncertain: s.attribution != "identified")
+            .padding(.top, 1)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Fmt.title(label: s.taskLabel, hosts: summary.hosts, startedAt: s.startedAt))
+                    .font(.callout.weight(.medium)).lineLimit(1)
+                Spacer(minLength: 4)
                 if s.state == "ended", digest?.reviewed == false {
                     Circle().fill(Color.accentColor).frame(width: 7, height: 7).help("Not reviewed yet").accessibilityLabel("Not reviewed")
                 }
-                Text(Fmt.day(s.startedAt)).font(.caption2).foregroundStyle(.secondary)
+                Text(Fmt.listDay(s.startedAt)).font(.caption2).foregroundStyle(.secondary).fixedSize()
+                    .help(Fmt.day(s.startedAt))
             }
-            Text(s.taskLabel.map(Fmt.oneLine) ?? (Fmt.sites(summary.hosts).first.map { "Work on \($0)" } ?? "Untitled session"))
-                .font(.callout).lineLimit(2)
             if let d = digest {
-                Text(d.oneLine).font(.caption).foregroundStyle(d.changes > 0 ? Color.primary : Color.secondary).lineLimit(2)
+                Text(Fmt.withoutAgent(d.oneLine, agent: s.agent)).font(.caption)
+                    .foregroundStyle(d.changes > 0 ? Color.primary : Color.secondary).lineLimit(2)
+            }
+            if s.attribution != "identified" || s.state != "ended" {
+                HStack(spacing: 6) {
+                    if s.attribution != "identified" {
+                        Chip(text: Words.attribution(s.attribution).text, color: Palette.attribution(s.attribution), help: Words.attribution(s.attribution).help)
+                    }
+                    if s.state != "ended" { Chip(text: Words.state(s.state).text, color: .red, help: Words.state(s.state).help) }
+                }
             }
             if !Fmt.sites(summary.hosts).isEmpty || (digest?.changes ?? 0) > 0 || (digest?.riskyScripts ?? 0) > 0
                 || summary.tabCount > 1 || summary.gapCount > 0 {
             HStack(spacing: 8) {
-                Text(Fmt.sites(summary.hosts).prefix(3).joined(separator: ", ")).lineLimit(1)
+                Text(sitesLine).lineLimit(1)
                 Spacer()
                 if let d = digest {
                     if d.changes > 0 {
@@ -136,6 +150,7 @@ struct SessionRow: View {
             }
             .font(.caption2).foregroundStyle(.secondary)
             }
+        }
         }
         .padding(.vertical, 3)
     }
@@ -220,7 +235,7 @@ struct SessionDetailView: View {
         let s = d.session
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                AgentBadge(agent: s.agent)
+                AgentBadge(agent: s.agent, size: 28)
                 Text(Correlator.displayAgent(s.agent)).font(.title2.weight(.semibold))
                 Chip(text: Words.attribution(s.attribution).text, color: Palette.attribution(s.attribution), help: Words.attribution(s.attribution).help)
                 Chip(text: Words.state(s.state).text, color: s.state == "ended" ? .secondary : .red, help: Words.state(s.state).help)
