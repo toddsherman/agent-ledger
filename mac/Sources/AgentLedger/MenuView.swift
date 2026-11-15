@@ -140,9 +140,18 @@ struct MenuView: View {
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
                 let n = model.unreviewed.count
-                Label(n == 0 ? "Open Ledger" : "Review \(n) session\(n == 1 ? "" : "s")", systemImage: "list.bullet.rectangle")
+                HStack(spacing: 6) {
+                    Image(systemName: "macwindow")
+                    Text("Open Agent Ledger")
+                    if n > 0 {
+                        Text("\(n) to review").font(.caption).opacity(0.85)
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
-            .help("Open the Ledger window, where every recorded session is listed")
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .help("Open the Agent Ledger window, where every recorded session is listed")
+            .padding(.bottom, 2)
             if !model.status.sessions.isEmpty {
                 Button { model.thisWasMe(minutes: 2) } label: { Label("That was me (last 2 minutes)", systemImage: "person.fill.checkmark") }
                     .help("Marks the last 2 minutes of clicks and typing in recorded tabs as yours, not the agent's")

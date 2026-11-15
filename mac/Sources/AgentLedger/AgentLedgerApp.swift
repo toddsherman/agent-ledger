@@ -25,6 +25,10 @@ struct AgentLedgerApp: App {
         .defaultSize(width: 1180, height: 760)
         .handlesExternalEvents(matching: ["ledger"])
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .disabled(!updater.isAvailable || !updater.canCheckForUpdates)
+            }
             // Quit from the menu or with Command-Q counts as your choice, so the app isn't restarted.
             CommandGroup(replacing: .appTermination) {
                 Button("Quit Agent Ledger") { model.quitByUser() }.keyboardShortcut("q")

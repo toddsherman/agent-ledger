@@ -3,6 +3,11 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.4.2
+
+- The menu bar panel has a large **Open Agent Ledger** button, with the number of sessions waiting for review beside it.
+- **Check for Updates…** is in the Agent Ledger menu, under About.
+
 ## 0.4.1
 
 - **Safari.** Agent Ledger records Chrome only. When an agent opens Safari, scripts it, or uses screen control on it, the session now says so and raises an alert, every time, so that part isn't silently missing from the record.
