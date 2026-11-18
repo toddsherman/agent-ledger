@@ -3,6 +3,10 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.4.4
+
+- A quieter menu bar panel: the "Ready, waiting for an agent" line and the review count on the Open Agent Ledger button are gone. The panel still says when it is recording, paused or needs attention.
+
 ## 0.4.3
 
 - **Cleaner session titles.** Long prompts arrive as Markdown with character codes such as `&#x20;`, and were shown as sent. Titles now show plain text, and a prompt that opens with a heading is titled by that heading. The stored prompt and exports are unchanged.

@@ -99,7 +99,7 @@ struct MenuView: View {
         let rec = recordingCount
         if rec > 0 { return "Recording \(rec) session\(rec == 1 ? "" : "s")" }
         if !model.status.sessions.isEmpty { return "Session idle" }
-        return "Ready, waiting for an agent"
+        return ""
     }
 
     private func sessionRow(_ s: LiveSessionInfo) -> some View {
@@ -139,13 +139,9 @@ struct MenuView: View {
                 openWindow(id: "ledger")
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                let n = model.unreviewed.count
                 HStack(spacing: 6) {
                     Image(systemName: "macwindow")
                     Text("Open Agent Ledger")
-                    if n > 0 {
-                        Text("\(n) to review").font(.caption).opacity(0.85)
-                    }
                 }
                 .frame(maxWidth: .infinity)
             }
