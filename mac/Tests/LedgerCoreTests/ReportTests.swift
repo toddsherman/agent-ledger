@@ -210,6 +210,17 @@ final class ReportTests: XCTestCase {
         XCTAssertTrue(Correlator.betterLabel("Update the pricing page", than: nil))
     }
 
+    func testTaskTitlesAreCleanedForDisplay() {
+        let codex = "&#x20;&#x20;\n\n# Build My Offline Emergency Knowledge Library\n\nI want you to build a **comprehensive** library.\n\n## 1. Destination\n\n- Store in `/Volumes/x`"
+        XCTAssertEqual(TaskTitle.short(codex), "Build My Offline Emergency Knowledge Library")
+        XCTAssertEqual(TaskTitle.plain(codex), "Build My Offline Emergency Knowledge Library I want you to build a comprehensive library. 1. Destination Store in /Volumes/x")
+        XCTAssertEqual(TaskTitle.short("# Files pasted by the user: ## \"# Build a Comprehensive Offline Library\nMore text"), "Build a Comprehensive Offline Library")
+        XCTAssertEqual(TaskTitle.short("check for another outage\nlast night"), "check for another outage last night")
+        XCTAssertEqual(TaskTitle.short("Tom &amp; Jerry &lt;3 &#39;quotes&#39; &bogus; R&D; 5 -3 *args"), "Tom & Jerry <3 'quotes' &bogus; R&D; 5 -3 *args")
+        XCTAssertEqual(TaskTitle.short("\n# Files pasted by the user:\n\n## \"# Build a Library ## Objective Bui…\": /Users/me/x.txt\n\nPasted text"), "Build a Library")
+        XCTAssertEqual(TaskTitle.short("  \n "), "")
+    }
+
     func testLookalikeDomains() {
         for (host, real) in [("paypa1.com", "paypal.com"), ("paypal.account-verify.net", "paypal.com"), ("secure-paypal.com", "paypal.com"),
                              ("chase-secure-login.com", "chase.com"), ("gihtub.com", "github.com"), ("githubb.com", "github.com"),

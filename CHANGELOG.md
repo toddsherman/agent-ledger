@@ -3,6 +3,11 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.4.3
+
+- **Cleaner session titles.** Long prompts arrive as Markdown with character codes such as `&#x20;`, and were shown as sent. Titles now show plain text, and a prompt that opens with a heading is titled by that heading. The stored prompt and exports are unchanged.
+- **Icons that explain themselves.** Point at a count in a session row (changes, scripts to check, tabs, gaps) and a small popover says what it counts.
+
 ## 0.4.2
 
 - The menu bar panel has a large **Open Agent Ledger** button, with the number of sessions waiting for review beside it.

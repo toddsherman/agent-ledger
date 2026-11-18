@@ -34,10 +34,9 @@ enum Fmt {
     /// The label as a task, on one line. Nil when there is none, or when it is a message
     /// a program sent the agent (it starts with a tag such as <task-notification>) and not a request.
     static func task(_ label: String?) -> String? {
-        guard let label else { return nil }
-        let text = oneLine(label)
-        if text.isEmpty || Correlator.isProgramMessage(text) { return nil }
-        return text
+        guard let label, !Correlator.isProgramMessage(TaskTitle.decodeEntities(label)) else { return nil }
+        let text = TaskTitle.short(label)
+        return text.isEmpty ? nil : text
     }
 
     /// Date and time for a list row: no year for this year, and just the time for today.
@@ -68,6 +67,42 @@ enum Fmt {
         if s < 60 { return "\(s)s" }
         if s < 3600 { return "\(s / 60)m \(s % 60)s" }
         return "\(s / 3600)h \((s % 3600) / 60)m"
+    }
+}
+
+/// A count with an icon, as in a session row. Pointing at it explains what it counts, in a
+/// small popover that opens at once (the system tooltip is slow and easy to miss in a list).
+struct CountBadge: View {
+    let count: Int
+    let icon: String
+    var color: Color = .primary
+    let title: String
+    let explain: String
+    @State private var hovering = false
+    @State private var shown = false
+
+    var body: some View {
+        Label("\(count)", systemImage: icon)
+            .foregroundStyle(color)
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(count) \(title)")
+            .accessibilityHint(explain)
+            .onHover { inside in
+                hovering = inside
+                if inside {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { if hovering { shown = true } }
+                } else {
+                    shown = false
+                }
+            }
+            .popover(isPresented: $shown, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(count) \(title)").font(.callout.weight(.semibold))
+                    Text(explain).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10).frame(width: 250, alignment: .leading)
+            }
     }
 }
 

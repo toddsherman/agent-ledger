@@ -134,18 +134,24 @@ struct SessionRow: View {
                 Spacer()
                 if let d = digest {
                     if d.changes > 0 {
-                        Label("\(d.changes)", systemImage: "pencil.and.list.clipboard").foregroundStyle(Color.primary)
-                            .help("Changes the agent made").accessibilityLabel("\(d.changes) changes")
+                        CountBadge(count: d.changes, icon: "pencil.and.list.clipboard",
+                                   title: d.changes == 1 ? "change" : "changes",
+                                   explain: "Things the agent changed on a page: fields it edited, forms it submitted, and requests that saved, sent or deleted something.")
                     }
-                    if d.riskyScripts > 0 { Label("\(d.riskyScripts)", systemImage: "curlybraces").foregroundStyle(.orange).help("Scripts that could have changed something") }
+                    if d.riskyScripts > 0 {
+                        CountBadge(count: d.riskyScripts, icon: "curlybraces", color: .orange,
+                                   title: d.riskyScripts == 1 ? "script to check" : "scripts to check",
+                                   explain: "Code the agent ran in a page that could have changed something, such as clicking, typing or sending a request. The recorder can't always tell what a script did.")
+                    }
                 }
                 if summary.tabCount > 1 {
-                    Label("\(summary.tabCount)", systemImage: "rectangle.on.rectangle")
-                        .help("Tabs the agent used").accessibilityLabel("\(summary.tabCount) tabs")
+                    CountBadge(count: summary.tabCount, icon: "rectangle.on.rectangle", color: .secondary,
+                               title: "tabs", explain: "Chrome tabs the agent used in this session.")
                 }
                 if summary.gapCount > 0 {
-                    Label("\(summary.gapCount)", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        .help(Words.incompleteRecordHelp).accessibilityLabel("\(summary.gapCount) parts not recorded")
+                    CountBadge(count: summary.gapCount, icon: "exclamationmark.triangle", color: .orange,
+                               title: summary.gapCount == 1 ? "gap" : "gaps",
+                               explain: "Stretches where the record is incomplete, for example a page the recorder couldn't read or a moment it wasn't running. " + Words.incompleteRecordHelp)
                 }
             }
             .font(.caption2).foregroundStyle(.secondary)
@@ -255,7 +261,7 @@ struct SessionDetailView: View {
                 }
             } else {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(s.taskLabel.map(Fmt.oneLine) ?? "Untitled session").font(.title3).foregroundStyle(s.taskLabel == nil ? .secondary : .primary)
+                    Text(s.taskLabel.map(TaskTitle.plain) ?? "Untitled session").font(.title3).foregroundStyle(s.taskLabel == nil ? .secondary : .primary)
                         .lineLimit(3).textSelection(.enabled).help(s.taskLabel ?? "")
                     if let src = s.labelSource { Text(src == "agent-prompt" ? "from the agent's prompt" : "set by you").font(.caption).foregroundStyle(.secondary) }
                     Button { editingLabel = true } label: { Image(systemName: "pencil") }.buttonStyle(.borderless)
