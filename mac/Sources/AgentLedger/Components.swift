@@ -70,14 +70,14 @@ enum Fmt {
     }
 }
 
-/// A count with an icon, as in a session row. Pointing at it explains what it counts, in a
-/// small popover that opens at once (the system tooltip is slow and easy to miss in a list).
+/// A count with an icon, as in a session row. Pointing at it says what the icon and its count
+/// mean, in a small popover that opens at once (the system tooltip is slow and easy to miss in a list).
 struct CountBadge: View {
     let count: Int
     let icon: String
     var color: Color = .primary
-    let title: String
-    let explain: String
+    /// What the count is of, after the number: "tabs used" reads as "5 tabs used".
+    let meaning: String
     @State private var hovering = false
     @State private var shown = false
 
@@ -86,8 +86,7 @@ struct CountBadge: View {
             .foregroundStyle(color)
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(count) \(title)")
-            .accessibilityHint(explain)
+            .accessibilityLabel("\(count) \(meaning)")
             .onHover { inside in
                 hovering = inside
                 if inside {
@@ -97,11 +96,7 @@ struct CountBadge: View {
                 }
             }
             .popover(isPresented: $shown, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(count) \(title)").font(.callout.weight(.semibold))
-                    Text(explain).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(10).frame(width: 250, alignment: .leading)
+                Text("\(count) \(meaning)").font(.callout).fixedSize().padding(.horizontal, 12).padding(.vertical, 8)
             }
     }
 }

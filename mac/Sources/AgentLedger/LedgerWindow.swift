@@ -135,23 +135,19 @@ struct SessionRow: View {
                 if let d = digest {
                     if d.changes > 0 {
                         CountBadge(count: d.changes, icon: "pencil.and.list.clipboard",
-                                   title: d.changes == 1 ? "change" : "changes",
-                                   explain: "Things the agent changed on a page: fields it edited, forms it submitted, and requests that saved, sent or deleted something.")
+                                   meaning: d.changes == 1 ? "change made" : "changes made")
                     }
                     if d.riskyScripts > 0 {
                         CountBadge(count: d.riskyScripts, icon: "curlybraces", color: .orange,
-                                   title: d.riskyScripts == 1 ? "script to check" : "scripts to check",
-                                   explain: "Code the agent ran in a page that could have changed something, such as clicking, typing or sending a request. The recorder can't always tell what a script did.")
+                                   meaning: d.riskyScripts == 1 ? "script that could have changed something" : "scripts that could have changed something")
                     }
                 }
                 if summary.tabCount > 1 {
-                    CountBadge(count: summary.tabCount, icon: "rectangle.on.rectangle", color: .secondary,
-                               title: "tabs", explain: "Chrome tabs the agent used in this session.")
+                    CountBadge(count: summary.tabCount, icon: "rectangle.on.rectangle", color: .secondary, meaning: "tabs used")
                 }
                 if summary.gapCount > 0 {
                     CountBadge(count: summary.gapCount, icon: "exclamationmark.triangle", color: .orange,
-                               title: summary.gapCount == 1 ? "gap" : "gaps",
-                               explain: "Stretches where the record is incomplete, for example a page the recorder couldn't read or a moment it wasn't running. " + Words.incompleteRecordHelp)
+                               meaning: summary.gapCount == 1 ? "gap with incomplete recording" : "gaps with incomplete recording")
                 }
             }
             .font(.caption2).foregroundStyle(.secondary)

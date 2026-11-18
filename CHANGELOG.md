@@ -3,6 +3,10 @@
 Release notes for the Agent Ledger Mac app. Each `## <version>` section becomes that release's
 Sparkle update notes.
 
+## 0.4.5
+
+- The popovers on the counts in a session row are one line that reads the number and the icon together, such as "5 tabs used" or "3 gaps with incomplete recording".
+
 ## 0.4.4
 
 - A quieter menu bar panel: the "Ready, waiting for an agent" line and the review count on the Open Agent Ledger button are gone. The panel still says when it is recording, paused or needs attention.
